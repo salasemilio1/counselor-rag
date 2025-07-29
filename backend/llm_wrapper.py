@@ -82,7 +82,7 @@ Respond ONLY with a valid JSON object, for example:
                 "client_names": []
             }
 
-    def generate_response(self, prompt: str) -> str:
+    def generate_text(self, prompt: str) -> str:
         """Generate a full response to a counselor query using retrieved context."""
         try:
             response = requests.post(self.endpoint, json={

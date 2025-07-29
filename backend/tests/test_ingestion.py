@@ -1,4 +1,4 @@
-from rag_engine import RAGEngine
+from backend.rag_engine import RAGEngine
 
 def test_ingestion(client_id: str):
     print(f"\n🔍 Testing ingestion for client: {client_id}")

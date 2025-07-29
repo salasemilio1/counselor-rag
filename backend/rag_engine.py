@@ -238,33 +238,178 @@ class RAGEngine:
         meeting_id: str = None,
         top_k: int = None
     ) -> List[Dict]:
-        """Retrieve relevant chunks for a query from client's documents"""
+        """Retrieve relevant chunks for a query from client's documents with improved ranking"""
+    
+        def _extract_query_entities(query_text: str) -> List[str]:
+            """Extract key entities and terms from query for enhanced matching"""
+            import re
+
+            # Common counseling-related keywords that should boost relevance
+            counseling_keywords = [
+                'anxiety', 'depression', 'stress', 'therapy', 'session', 'progress',
+                'goals', 'challenge', 'struggle', 'improvement', 'breakthrough',
+                'relationship', 'family', 'work', 'career', 'emotional', 'feelings',
+                'coping', 'strategies', 'techniques', 'homework', 'assignment'
+            ]
+
+            query_lower = query_text.lower()
+            entities = []
+
+            # Extract quoted phrases
+            quoted_phrases = re.findall(r'"([^"]*)"', query_text)
+            entities.extend(quoted_phrases)
+
+            # Extract capitalized words (potential names, places)
+            capitalized = re.findall(r'\b[A-Z][a-z]+\b', query_text)
+            entities.extend(capitalized)
+
+            # Extract counseling keywords present in query
+            for keyword in counseling_keywords:
+                if keyword in query_lower:
+                    entities.append(keyword)
+
+            # Extract meaningful words (longer than 3 chars, not common stop words)
+            stop_words = {'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'was', 'were', 'is', 'are', 'what', 'when', 'where', 'how', 'why', 'did', 'does', 'will', 'would', 'could', 'should'}
+            words = re.findall(r'\b\w{4,}\b', query_lower)
+            meaningful_words = [w for w in words if w not in stop_words]
+            entities.extend(meaningful_words)
+
+            return list(set(entities))  # Remove duplicates
+
+        def _rerank_chunks_with_keyword_matching(chunks: List[Dict], query_entities: List[str]) -> List[Dict]:
+            """Re-rank chunks based on keyword matching and metadata relevance"""
+            for chunk in chunks:
+                content_lower = chunk['content'].lower()
+                metadata = chunk.get('metadata', {})
+
+                # Base score from vector similarity (convert distance to similarity)
+                vector_similarity = 1 - chunk.get('distance', 1)
+
+                # Keyword matching score
+                keyword_matches = sum(1 for entity in query_entities if entity.lower() in content_lower)
+                keyword_score = min(keyword_matches / max(len(query_entities), 1), 1.0)
+
+                # Metadata relevance boost
+                metadata_boost = 0
+
+                # Boost recent meetings
+                if 'date' in metadata:
+                    try:
+                        from datetime import datetime, timedelta
+                        meeting_date = datetime.strptime(metadata['date'], '%Y-%m-%d')
+                        days_ago = (datetime.now() - meeting_date).days
+                        if days_ago <= 7:
+                            metadata_boost += 0.15  # Recent meeting boost
+                        elif days_ago <= 30:
+                            metadata_boost += 0.10
+                        elif days_ago <= 90:
+                            metadata_boost += 0.05
+                    except:
+                        pass
+                    
+                # Boost chunks from specific meetings if relevant
+                if 'title' in metadata and any(term in metadata['title'].lower() for term in ['breakthrough', 'crisis', 'important', 'significant']):
+                    metadata_boost += 0.1
+
+                # Composite score: weighted combination
+                composite_score = (
+                    0.6 * vector_similarity +      # Vector similarity weight
+                    0.3 * keyword_score +          # Keyword matching weight  
+                    0.1 * metadata_boost           # Metadata relevance weight
+                )
+
+                chunk['composite_score'] = composite_score
+                chunk['keyword_matches'] = keyword_matches
+                chunk['vector_similarity'] = vector_similarity
+
+            # Sort by composite score (descending)
+            chunks.sort(key=lambda x: x['composite_score'], reverse=True)
+            return chunks
+
+        def _apply_diversity_filtering(chunks: List[Dict], max_chunks_per_meeting: int = 3) -> List[Dict]:
+            """Apply diversity filtering to avoid over-representation from single meetings"""
+            if not chunks:
+                return chunks
+
+            meeting_counts = {}
+            filtered_chunks = []
+
+            for chunk in chunks:
+                meeting_id_from_chunk = chunk.get('metadata', {}).get('meeting_id', 'unknown')
+                current_count = meeting_counts.get(meeting_id_from_chunk, 0)
+
+                if current_count < max_chunks_per_meeting:
+                    filtered_chunks.append(chunk)
+                    meeting_counts[meeting_id_from_chunk] = current_count + 1
+
+            return filtered_chunks
+
+        def _apply_dynamic_threshold(chunks: List[Dict], min_chunks: int = 2) -> List[Dict]:
+            """Apply dynamic similarity threshold based on query results quality"""
+            if not chunks:
+                return chunks
+
+            # Calculate score statistics
+            scores = [chunk['composite_score'] for chunk in chunks]
+            if not scores:
+                return chunks
+
+            mean_score = sum(scores) / len(scores)
+            max_score = max(scores)
+
+            # Dynamic threshold: more lenient if top results are poor, stricter if good
+            if max_score > 0.8:
+                # High quality results available, be more selective
+                threshold = max(0.6, mean_score)
+            elif max_score > 0.6:
+                # Medium quality results, moderate threshold
+                threshold = max(0.4, mean_score * 0.8)
+            else:
+                # Lower quality results, be more lenient
+                threshold = max(0.3, mean_score * 0.6)
+
+            # Apply threshold but ensure minimum chunks
+            filtered = [chunk for chunk in chunks if chunk['composite_score'] >= threshold]
+
+            # If too few chunks pass threshold, take top min_chunks anyway
+            if len(filtered) < min_chunks and len(chunks) >= min_chunks:
+                filtered = chunks[:min_chunks]
+
+            return filtered
+
         try:
             if top_k is None:
                 top_k = self.top_k
-            
+
+            # Expand initial retrieval to allow for better re-ranking
+            initial_top_k = min(top_k * 3, 20)  # Get more candidates for re-ranking
+
             # Generate query embedding
             query_embedding = self.embed_text(query)
             if not query_embedding:
                 return []
-            
+
+            # Extract query entities for enhanced matching
+            query_entities = _extract_query_entities(query)
+            logger.info(f"Extracted query entities: {query_entities}")
+
             # Get client collection
             collection = self._get_client_collection(client_id)
-            
+
             if CHROMA_AVAILABLE:
                 # Prepare where clause for meeting filtering
                 where_clause = None
                 if meeting_id:
                     where_clause = {"meeting_id": meeting_id}
-                
-                # Query the collection
+
+                # Query the collection with expanded results
                 results = collection.query(
                     query_embeddings=[query_embedding],
-                    n_results=top_k,
+                    n_results=initial_top_k,
                     where=where_clause
                 )
-                
-                # Format results
+
+                # Format raw results
                 relevant_chunks = []
                 if results['documents'] and results['documents'][0]:
                     for i in range(len(results['documents'][0])):
@@ -275,77 +420,98 @@ class RAGEngine:
                             'id': results['ids'][0][i]
                         }
                         relevant_chunks.append(chunk)
-                
+
+                logger.info(f"Retrieved {len(relevant_chunks)} raw chunks for query before re-ranking.")
+
             else:
                 # Use in-memory fallback
                 relevant_chunks = self.vector_db.query(
                     client_id=client_id,
                     query_embedding=query_embedding,
                     meeting_id=meeting_id,
-                    top_k=top_k
+                    top_k=initial_top_k
                 )
-            
-            # Filter by similarity threshold
-            filtered_chunks = [
-                chunk for chunk in relevant_chunks
-                if chunk.get('distance', 0) <= (1 - self.similarity_threshold)
-            ]
-            
-            logger.info(f"Retrieved {len(filtered_chunks)} relevant chunks for query")
-            return filtered_chunks
-            
+                logger.info(f"Retrieved {len(relevant_chunks)} raw chunks for query before re-ranking (in-memory fallback).")
+
+            if not relevant_chunks:
+                return []
+
+            # Apply enhanced re-ranking
+            reranked_chunks = _rerank_chunks_with_keyword_matching(relevant_chunks, query_entities)
+            logger.info(f"Re-ranked chunks by composite scoring")
+
+            # Apply diversity filtering to avoid over-representation
+            diverse_chunks = _apply_diversity_filtering(reranked_chunks, max_chunks_per_meeting=2)
+            logger.info(f"Applied diversity filtering: {len(diverse_chunks)} chunks after diversity filtering")
+
+            # Apply dynamic threshold
+            final_chunks = _apply_dynamic_threshold(diverse_chunks, min_chunks=2)
+
+            # Limit to requested top_k
+            final_chunks = final_chunks[:top_k]
+
+            # Log final results with scores
+            logger.info(f"Final result: {len(final_chunks)} chunks after all filtering and ranking")
+            for i, chunk in enumerate(final_chunks[:3]):  # Log top 3 for debugging
+                logger.info(f"Chunk {i+1}: composite_score={chunk.get('composite_score', 0):.3f}, "
+                           f"vector_sim={chunk.get('vector_similarity', 0):.3f}, "
+                           f"keyword_matches={chunk.get('keyword_matches', 0)}")
+
+            return final_chunks
+
         except Exception as e:
             logger.error(f"Error retrieving chunks: {e}")
             return []
     
     def generate_response(self, client_id: str, query: str, meeting_id: str = None) -> Dict:
-        """Generate response using RAG pipeline"""
+        """Generate a RAG-based response to a counselor query."""
         try:
-            # Retrieve relevant chunks
+            # Step 1: Retrieve chunks
             relevant_chunks = self.retrieve_relevant_chunks(client_id, query, meeting_id)
-            
+
             if not relevant_chunks:
                 return {
-                    'answer': f"I don't have any relevant information about {query} for this client.",
+                    'answer': f"I don't have any relevant information about '{query}' for this client.",
                     'sources': [],
-                    'confidence': 0.0
+                    'confidence': 0.0,
+                    'chunks_used': 0
                 }
-            
-            # Prepare context from retrieved chunks
-            context_parts = []
-            sources = []
-            
-            for chunk in relevant_chunks:
-                context_parts.append(chunk['content'])
-                sources.append({
+
+            # Step 2: Construct context and prompt
+            context = "\n\n".join(chunk['content'] for chunk in relevant_chunks)
+            sources = [
+                {
                     'meeting_id': chunk['metadata'].get('meeting_id', 'unknown'),
                     'date': chunk['metadata'].get('date', 'unknown'),
                     'chunk_id': chunk['id']
-                })
-            
-            context = "\n\n".join(context_parts)
-            
-            # Generate response using LLM
+                } for chunk in relevant_chunks
+            ]
             prompt = self._create_rag_prompt(query, context, client_id)
-            response = self.llm_wrapper.generate_response(prompt)
-            
-            # Calculate confidence based on chunk similarities
-            avg_similarity = np.mean([1 - chunk.get('distance', 1) for chunk in relevant_chunks])
-            
+
+            # Step 3: Generate answer
+            response = self.llm_wrapper.generate_text(prompt)
+
+            # Step 4: Score
+            avg_similarity = np.mean([
+                max(0.0, min(1.0, 1 - chunk.get('distance', 1)))
+                for chunk in relevant_chunks
+            ])
+
             return {
                 'answer': response,
                 'sources': sources,
                 'confidence': float(avg_similarity),
                 'chunks_used': len(relevant_chunks)
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             return {
                 'answer': "I encountered an error while processing your query.",
                 'sources': [],
-                'confidence': 0.0
-            }
+                'confidence': 0.0,
+                'chunks_used': 0
+            }        
     
     def _create_rag_prompt(self, query: str, context: str, client_id: str) -> str:
         """Create a prompt for the LLM using retrieved context"""
