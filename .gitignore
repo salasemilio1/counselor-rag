@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.env
+
+# VS Code / VSCodium settings
+.vscode/
+*.code-workspace
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python artifacts
+*.pyo
+*.pyd
+*.pdb
+
+# Logs and debug output
+*.log
+logs/
+debug_*.json
+
+# Database files and test artifacts
+*.sqlite
+*.db
+*.bak
+
+# ChromaDB persistent store
+data/vector_db/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# (Optional) exclude uploaded documents
+data/clients/*/*.docx
+data/clients/*/*.txt

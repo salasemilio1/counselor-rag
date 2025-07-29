@@ -1,0 +1,14 @@
+{
+  "john_doe_john_001_2025-07-01.txt": {
+    "file_hash": "e1110acda113d92bfb29a2214cf3db2d",
+    "processed_at": "2025-07-29T14:24:56.407441",
+    "chunk_count": 2,
+    "meeting_id": "001"
+  },
+  "john_john_001_2025-07-01.txt": {
+    "file_hash": "e1110acda113d92bfb29a2214cf3db2d",
+    "processed_at": "2025-07-29T15:00:29.013378",
+    "chunk_count": 2,
+    "meeting_id": "001"
+  }
+}
