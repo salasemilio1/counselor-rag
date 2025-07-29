@@ -486,9 +486,9 @@ class RAGEngine:
                     'chunk_id': chunk['id']
                 } for chunk in relevant_chunks
             ]
-            prompt = self._create_rag_prompt(query, context, client_id)
 
-            # Step 3: Generate answer
+            client_name = client_id.capitalize()
+            prompt = self.llm_wrapper.build_structured_prompt(query, context, client_name)
             response = self.llm_wrapper.generate_text(prompt)
 
             # Step 4: Score

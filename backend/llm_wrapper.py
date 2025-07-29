@@ -83,15 +83,57 @@ Respond ONLY with a valid JSON object, for example:
             }
 
     def generate_text(self, prompt: str) -> str:
-        """Generate a full response to a counselor query using retrieved context."""
+        """Stream a full response to a counselor query using retrieved context."""
         try:
             response = requests.post(self.endpoint, json={
                 "model": self.model_name,
                 "prompt": prompt,
-                "stream": False
-            })
+                "stream": True
+            }, stream=True)
             response.raise_for_status()
-            return response.json().get("response", "").strip()
+            
+            output = ""
+            for line in response.iter_lines(decode_unicode=True):
+                if line:
+                    try:
+                        data = json.loads(line)
+                        token = data.get("response", "")
+                        print(token, end="", flush=True)  # stream to terminal
+                        output += token
+                    except json.JSONDecodeError:
+                        logger.warning(f"Malformed line in stream: {line}")
+            return output.strip()
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
             return "I'm sorry, I couldn't generate a response due to an internal error."
+
+    def build_structured_prompt(self, query: str, context: str, client_name: str) -> str:
+        """Format the prompt to guide the LLM into giving structured, templated output."""
+        return f'''
+You are an expert therapy assistant helping a counselor prepare for client meetings. Use the following context to answer the question clearly and professionally.
+
+Client: {client_name}
+
+Context:
+\"\"\"
+{context}
+\"\"\"
+
+Question: {query}
+
+Format your response with the following sections:
+
+Summary:
+- (Brief summary of the relevant information)
+
+Therapy Goals:
+- (List any mentioned or implied goals)
+
+Progress Indicators:
+- (Summarize how the client is progressing or struggling)
+
+Recommendations:
+- (List any follow-up or suggestions discussed)
+
+Respond clearly and concisely. If there's not enough info, say so.
+'''
