@@ -235,7 +235,7 @@ class RAGEngine:
         self,
         client_id: str,
         query: str,
-        meeting_id: str = None,
+        meeting_ids: Optional[List[str]] = None,
         top_k: int = None
     ) -> List[Dict]:
         """Retrieve relevant chunks for a query from client's documents with improved ranking"""
@@ -399,8 +399,8 @@ class RAGEngine:
             if CHROMA_AVAILABLE:
                 # Prepare where clause for meeting filtering
                 where_clause = None
-                if meeting_id:
-                    where_clause = {"meeting_id": meeting_id}
+                if meeting_ids:
+                    where_clause = {"meeting_id": {"$in": meeting_ids}}
 
                 # Query the collection with expanded results
                 results = collection.query(
@@ -428,7 +428,6 @@ class RAGEngine:
                 relevant_chunks = self.vector_db.query(
                     client_id=client_id,
                     query_embedding=query_embedding,
-                    meeting_id=meeting_id,
                     top_k=initial_top_k
                 )
                 logger.info(f"Retrieved {len(relevant_chunks)} raw chunks for query before re-ranking (in-memory fallback).")
@@ -463,11 +462,16 @@ class RAGEngine:
             logger.error(f"Error retrieving chunks: {e}")
             return []
     
-    def generate_response(self, client_id: str, query: str, meeting_id: str = None) -> Dict:
+    def generate_response(
+        self,
+        client_id: str,
+        query: str,
+        meeting_ids: Optional[List[str]] = None
+    ) -> Dict:
         """Generate a RAG-based response to a counselor query."""
         try:
             # Step 1: Retrieve chunks
-            relevant_chunks = self.retrieve_relevant_chunks(client_id, query, meeting_id)
+            relevant_chunks = self.retrieve_relevant_chunks(client_id, query, meeting_ids=meeting_ids)
 
             if not relevant_chunks:
                 return {
@@ -511,7 +515,7 @@ class RAGEngine:
                 'sources': [],
                 'confidence': 0.0,
                 'chunks_used': 0
-            }        
+            }
     
     def _create_rag_prompt(self, query: str, context: str, client_id: str) -> str:
         """Create a prompt for the LLM using retrieved context"""
