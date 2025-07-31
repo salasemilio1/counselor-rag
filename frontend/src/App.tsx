@@ -1,47 +1,51 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock } from 'lucide-react';
+import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X } from 'lucide-react';
 
 const App = () => {
-  const [selectedClient, setSelectedClient] = useState('John Doe');
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      type: 'ai',
-      content: "Hello! I'm here to help you prepare for your session with John. What would you like to know about his case history, treatment goals, or previous sessions?",
-      timestamp: new Date(Date.now() - 300000)
+  const [selectedClient, setSelectedClient] = useState('');
+  const [messages, setMessages] = useState<Array<{
+    id: number;
+    type: 'user' | 'ai';
+    content: string;
+    timestamp: Date;
+    sources?: { filename?: string }[];
+  }>>([]);
+  // New: track selected source document for viewing
+  const [selectedSource, setSelectedSource] = useState(null);
+  const [sourceText, setSourceText] = useState('');
+  // New: fetch and load selected source document text
+  useEffect(() => {
+    const fetchSourceText = async () => {
+      if (!selectedSource?.filename) return;
+      try {
+        const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+        const res = await fetch(`${BACKEND_URL}/static/clients/${clientId}/${selectedSource.filename}`);
+        const text = await res.text();
+        setSourceText(text);
+      } catch (err) {
+        setSourceText(`⚠️ Failed to load document: ${err.message}`);
+      }
+    };
+    if (selectedSource) {
+      fetchSourceText();
+    } else {
+      setSourceText('');
     }
-  ]);
+    // eslint-disable-next-line
+  }, [selectedSource]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [selectedDocs, setSelectedDocs] = useState([]);
+  const [isUploading, setIsUploading] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const fileInputRef = useRef(null);
+  
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
-  const clients = [
-    { 
-      name: 'John Doe', 
-      lastSession: '2 days ago', 
-      status: 'active',
-      nextSession: 'Today, 2:00 PM'
-    },
-    { 
-      name: 'Jane Smith', 
-      lastSession: '1 week ago', 
-      status: 'scheduled',
-      nextSession: 'Tomorrow, 10:00 AM'
-    },
-    { 
-      name: 'Michael Johnson', 
-      lastSession: '3 days ago', 
-      status: 'active',
-      nextSession: 'Friday, 3:30 PM'
-    },
-    { 
-      name: 'Sarah Wilson', 
-      lastSession: '2 weeks ago', 
-      status: 'inactive',
-      nextSession: 'Not scheduled'
-    }
-  ];
+  // Client list state (fetched from backend)
+  const [clientList, setClientList] = useState([]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -50,6 +54,71 @@ const App = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Fetch documents when client changes
+  useEffect(() => {
+    const fetchDocuments = async () => {
+      try {
+        const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+        const res = await fetch(`${BACKEND_URL}/meetings/${clientId}`);
+        const data = await res.json();
+        const realDocs = (data.meetings || data.files || []).map((doc, index) => ({
+          id: doc.id || `doc_${index}`,
+          name: doc.name || doc.filename || `Doc ${index + 1}`,
+          filename: doc.filename || doc.name
+        }));
+        setDocuments(realDocs);
+      } catch (error) {
+        console.error('Failed to fetch documents:', error);
+        setDocuments([]);
+      }
+    };
+    fetchDocuments();
+  }, [selectedClient]);
+
+  // Fetch clients from backend on mount
+  useEffect(() => {
+    const fetchClients = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/clients`);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        const data = await res.json();
+
+        if (data.error) {
+          console.error("Backend error:", data.error);
+          return;
+        }
+
+        const dynamicClients = data.clients.map((name) => ({
+          name,
+          lastSession: 'Unknown',
+          status: 'active',
+          nextSession: 'Not scheduled'
+        }));
+
+        setClientList(dynamicClients);
+        if (dynamicClients.length === 0) {
+          setMessages([{
+            id: 1,
+            type: 'ai',
+            content: "👋 Welcome! No clients have been added yet. Once you upload documents for a client, they will appear here.",
+            timestamp: new Date()
+          }]);
+        }
+      } catch (err) {
+        console.error("Failed to fetch clients:", err);
+        setMessages([{
+          id: 1,
+          type: 'ai',
+          content: `❌ Failed to connect to backend: ${err.message}. Please ensure the backend is running on ${BACKEND_URL}`,
+          timestamp: new Date()
+        }]);
+      }
+    };
+    fetchClients();
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -63,30 +132,50 @@ const App = () => {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const queryText = inputValue;
     setInputValue('');
     setIsTyping(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiResponses = [
-        `Based on ${selectedClient}'s case notes, their primary treatment goals include improving coping strategies for anxiety and developing better communication skills. Their last session focused on cognitive behavioral techniques, and they showed good progress with the homework assignments.`,
-        `${selectedClient} has been working on mindfulness exercises since our last session. Their anxiety levels have decreased from 7/10 to 4/10 over the past month. Key discussion points for today might include their workplace stress and relationship concerns.`,
-        `Recent session notes indicate ${selectedClient} has been practicing grounding techniques successfully. They've reported better sleep patterns and reduced panic episodes. Consider exploring their progress with the breathing exercises we introduced.`
-      ];
-      
+    try {
+      const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+      const response = await fetch(`${BACKEND_URL}/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          query: queryText,
+          meeting_ids: selectedDocs.length > 0 ? selectedDocs : undefined
+        })
+      });
+
+      const data = await response.json();
+
       const aiMessage = {
         id: Date.now() + 1,
         type: 'ai',
-        content: aiResponses[Math.floor(Math.random() * aiResponses.length)],
+        content: data.answer,
+        timestamp: new Date(),
+        sources: data.sources || []
+      };
+
+      setMessages(prev => [...prev, aiMessage]);
+    } catch (error) {
+      const errorMessage = {
+        id: Date.now() + 1,
+        type: 'ai',
+        content: `❌ Query failed: ${error.message}`,
         timestamp: new Date()
       };
-      
-      setMessages(prev => [...prev, aiMessage]);
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
       setIsTyping(false);
-    }, 1500);
+    }
   };
 
   const handleClientSelect = (clientName) => {
+    if (!clientName) return;
     setSelectedClient(clientName);
     setMessages([
       {
@@ -96,6 +185,83 @@ const App = () => {
         timestamp: new Date()
       }
     ]);
+    setSelectedDocs([]);
+  };
+
+  const handleDocSelect = (docId) => {
+    setSelectedDocs(prev => {
+      if (prev.includes(docId)) {
+        return prev.filter(id => id !== docId);
+      } else {
+        return [...prev, docId];
+      }
+    });
+  };
+
+  const handleFileUpload = async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append(
+        "client_id",
+        selectedClient.toLowerCase().replace(/\s+/g, "")
+      );
+      files.forEach((file) => {
+        formData.append("files", file);
+      });
+
+      // Upload files
+      const uploadRes = await fetch(`${BACKEND_URL}/upload`, {
+        method: "POST",
+        body: formData
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error("Upload failed");
+      }
+
+      // Trigger ingestion
+      await fetch(
+        `${BACKEND_URL}/ingest/${selectedClient
+          .toLowerCase()
+          .replace(/\s+/g, "")}`,
+        {
+          method: "POST"
+        }
+      );
+
+      const successMessage = {
+        id: Date.now(),
+        type: "ai",
+        content: `✅ Successfully uploaded and ingested ${files.length} file(s) for ${selectedClient}. Files are now available for querying.`,
+        timestamp: new Date()
+      };
+      setMessages((prev) => [...prev, successMessage]);
+
+      const newDocs = files.map((file, index) => ({
+        id: `upload_${Date.now()}_${index}`,
+        name: file.name,
+        filename: file.name
+      }));
+      setDocuments((prev) => [...prev, ...newDocs]);
+    } catch (err) {
+      const errorMessage = {
+        id: Date.now(),
+        type: "ai",
+        content: `❌ Upload failed: ${err.message}`,
+        timestamp: new Date()
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   };
 
   const formatTime = (timestamp) => {
@@ -130,7 +296,18 @@ const App = () => {
             </div>
           </div>
           
-          <button className="w-full flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+          <button 
+            onClick={() => {
+              setMessages([{
+                id: 1,
+                type: 'ai',
+                content: `Hello! I'm here to help you prepare for your session with ${selectedClient}. What would you like to know about their case history, treatment goals, or previous sessions?`,
+                timestamp: new Date()
+              }]);
+              setSelectedDocs([]);
+            }}
+            className="w-full flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
             <Plus className="w-4 h-4" />
             New Chat
           </button>
@@ -151,7 +328,7 @@ const App = () => {
 
           <div className="space-y-2">
             <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wide px-2">Clients</h3>
-            {clients.map((client) => (
+            {clientList.map((client) => (
               <div
                 key={client.name}
                 onClick={() => handleClientSelect(client.name)}
@@ -197,12 +374,65 @@ const App = () => {
                 <p className="text-sm text-gray-500">Session Preparation Assistant</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                <FileText className="w-5 h-5" />
-              </button>
+            <div className="flex items-center gap-3">
+              {/* Document Selection */}
+              {documents.length > 0 && (
+                <div className="relative">
+                  <div className="text-xs text-gray-500 mb-1">Available Documents ({documents.length})</div>
+                  <div className="flex flex-wrap gap-1 max-w-xs">
+                    {documents.slice(0, 3).map(doc => (
+                      <button
+                        key={doc.id}
+                        onClick={() => handleDocSelect(doc.id)}
+                        className={`px-2 py-1 text-xs rounded-full border transition-colors ${
+                          selectedDocs.includes(doc.id)
+                            ? 'bg-blue-100 border-blue-300 text-blue-800'
+                            : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        {(doc.name || doc.filename || 'Document').slice(0, 15)}
+                        {selectedDocs.includes(doc.id) && <X className="w-3 h-3 ml-1 inline" />}
+                      </button>
+                    ))}
+                    {documents.length > 3 && (
+                      <span className="px-2 py-1 text-xs text-gray-500">+{documents.length - 3} more</span>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* File Upload */}
+              <div className="relative">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.txt"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+                  title="Upload documents"
+                >
+                  {isUploading ? (
+                    <div className="w-5 h-5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                  ) : (
+                    <Upload className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
+          
+          {/* Selected Documents Info */}
+          {selectedDocs.length > 0 && (
+            <div className="mt-2 text-xs text-blue-600">
+              Querying {selectedDocs.length} selected document{selectedDocs.length > 1 ? 's' : ''}
+            </div>
+          )}
         </header>
 
         {/* Messages */}
@@ -227,7 +457,23 @@ const App = () => {
                       ? 'bg-blue-600 text-white'
                       : 'bg-white border border-gray-200 text-gray-900'
                   }`}>
-                    <p className="text-sm leading-relaxed">{message.content}</p>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                    {message.sources && message.sources.length > 0 && (
+                      <div className="mt-2 text-xs text-gray-500">
+                        <strong>Sources:</strong>{" "}
+                        {message.sources.map((src, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setSelectedSource(src)}
+                            className="underline hover:text-blue-700 transition-colors"
+                            type="button"
+                          >
+                            {src.filename || "Unnamed Document"}
+                            {i < message.sources.length - 1 && <span>{", "}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <span className="text-xs text-gray-500 mt-1 px-1">
                     {formatTime(message.timestamp)}
@@ -252,6 +498,26 @@ const App = () => {
             )}
             
             <div ref={messagesEndRef} />
+            {/* Document viewer pane */}
+            {selectedSource && (
+              <div className="border-t border-gray-300 mt-6 pt-4 max-w-4xl mx-auto">
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-sm font-semibold text-gray-700">
+                    Viewing: {selectedSource.filename}
+                  </h4>
+                  <button
+                    onClick={() => setSelectedSource(null)}
+                    className="text-sm text-red-500 hover:underline"
+                    type="button"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="max-h-60 overflow-y-auto text-sm whitespace-pre-wrap bg-gray-100 p-3 rounded-md border border-gray-200">
+                  {sourceText}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -273,6 +539,7 @@ const App = () => {
                   }}
                   placeholder={`Ask about ${selectedClient}'s case, goals, or session history...`}
                   className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                  disabled={isTyping}
                 />
               </div>
               <button
