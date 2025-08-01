@@ -76,49 +76,76 @@ const App = () => {
     fetchDocuments();
   }, [selectedClient]);
 
-  // Fetch clients from backend on mount
-  useEffect(() => {
-    const fetchClients = async () => {
-      try {
-        const res = await fetch(`${BACKEND_URL}/clients`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        }
-        const data = await res.json();
+  // Fetch clients from backend (moved to component scope)
+  const fetchClients = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/clients`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      const data = await res.json();
 
-        if (data.error) {
-          console.error("Backend error:", data.error);
-          return;
-        }
+      if (data.error) {
+        console.error("Backend error:", data.error);
+        return;
+      }
 
-        const dynamicClients = data.clients.map((name) => ({
-          name,
-          lastSession: 'Unknown',
-          status: 'active',
-          nextSession: 'Not scheduled'
-        }));
+      const dynamicClients = data.clients.map((name) => ({
+        name,
+        lastSession: 'Unknown',
+        status: 'active',
+        nextSession: 'Not scheduled'
+      }));
 
-        setClientList(dynamicClients);
-        if (dynamicClients.length === 0) {
-          setMessages([{
-            id: 1,
-            type: 'ai',
-            content: "👋 Welcome! No clients have been added yet. Once you upload documents for a client, they will appear here.",
-            timestamp: new Date()
-          }]);
-        }
-      } catch (err) {
-        console.error("Failed to fetch clients:", err);
+      setClientList(dynamicClients);
+      if (dynamicClients.length === 0) {
         setMessages([{
           id: 1,
           type: 'ai',
-          content: `❌ Failed to connect to backend: ${err.message}. Please ensure the backend is running on ${BACKEND_URL}`,
+          content: "👋 Welcome! No clients have been added yet. Once you upload documents for a client, they will appear here.",
           timestamp: new Date()
         }]);
       }
-    };
+    } catch (err) {
+      console.error("Failed to fetch clients:", err);
+      setMessages([{
+        id: 1,
+        type: 'ai',
+        content: `❌ Failed to connect to backend: ${err.message}. Please ensure the backend is running on ${BACKEND_URL}`,
+        timestamp: new Date()
+      }]);
+    }
+  };
+  // Fetch clients from backend on mount
+  useEffect(() => {
     fetchClients();
   }, []);
+
+  // Add Client handler
+  const handleAddClient = async () => {
+    const name = window.prompt("Enter new client name:");
+    if (!name?.trim()) return;
+    try {
+      const clientId = name.toLowerCase().replace(/\s+/g, "_");
+      const res = await fetch(`${BACKEND_URL}/clients/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId })
+      });
+      if (!res.ok) throw new Error("Failed to create client");
+      await fetchClients();
+      setSelectedClient(name);
+      setMessages([{
+        id: Date.now(),
+        type: "ai",
+        content: `👋 New client '${name}' created. You can now upload documents to get started.`,
+        timestamp: new Date()
+      }]);
+    } catch (err) {
+      console.error(err);
+      alert(err.message);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -202,13 +229,16 @@ const App = () => {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
 
+    // Compute clientId once
+    const clientId = selectedClient.toLowerCase().replace(/\s+/g, "");
+
     setIsUploading(true);
 
     try {
       const formData = new FormData();
       formData.append(
         "client_id",
-        selectedClient.toLowerCase().replace(/\s+/g, "")
+        clientId
       );
       files.forEach((file) => {
         formData.append("files", file);
@@ -224,15 +254,14 @@ const App = () => {
         throw new Error("Upload failed");
       }
 
-      // Trigger ingestion
-      await fetch(
-        `${BACKEND_URL}/ingest/${selectedClient
-          .toLowerCase()
-          .replace(/\s+/g, "")}`,
-        {
-          method: "POST"
-        }
-      );
+      // Trigger ingestion after upload
+      const ingestRes = await fetch(`${BACKEND_URL}/ingest/${clientId}`, {
+        method: "POST"
+      });
+      const ingestData = await ingestRes.json();
+      if (!ingestRes.ok) {
+        throw new Error(ingestData.message || "Ingestion failed");
+      }
 
       const successMessage = {
         id: Date.now(),
@@ -295,22 +324,31 @@ const App = () => {
               <p className="text-sm text-gray-500">Session Preparation</p>
             </div>
           </div>
-          
-          <button 
-            onClick={() => {
-              setMessages([{
-                id: 1,
-                type: 'ai',
-                content: `Hello! I'm here to help you prepare for your session with ${selectedClient}. What would you like to know about their case history, treatment goals, or previous sessions?`,
-                timestamp: new Date()
-              }]);
-              setSelectedDocs([]);
-            }}
-            className="w-full flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Chat
-          </button>
+          <div className="flex flex-row">
+            <button
+              onClick={handleAddClient}
+              className="ml-0 mr-2 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Add Client"
+              type="button"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => {
+                setMessages([{
+                  id: 1,
+                  type: 'ai',
+                  content: `Hello! I'm here to help you prepare for your session with ${selectedClient}. What would you like to know about their case history, treatment goals, or previous sessions?`,
+                  timestamp: new Date()
+                }]);
+                setSelectedDocs([]);
+              }}
+              className="w-full flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Chat
+            </button>
+          </div>
         </div>
 
         {/* Client List */}
