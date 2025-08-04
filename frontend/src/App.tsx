@@ -35,6 +35,7 @@ const App = () => {
   }, [selectedSource]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [selectedDocs, setSelectedDocs] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -163,9 +164,24 @@ const App = () => {
     setInputValue('');
     setIsTyping(true);
 
+    // Create placeholder AI message for streaming
+    const aiMessageId = Date.now() + 1;
+    const aiMessage = {
+      id: aiMessageId,
+      type: 'ai',
+      content: '',
+      timestamp: new Date(),
+      sources: []
+    };
+    setMessages(prev => [...prev, aiMessage]);
+    
+    // Switch from typing indicator to streaming mode
+    setIsTyping(false);
+    setIsStreaming(true);
+
     try {
       const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
-      const response = await fetch(`${BACKEND_URL}/query`, {
+      const response = await fetch(`${BACKEND_URL}/query/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -177,27 +193,75 @@ const App = () => {
         })
       });
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
 
-      const aiMessage = {
-        id: Date.now() + 1,
-        type: 'ai',
-        content: data.answer,
-        timestamp: new Date(),
-        sources: data.sources || []
-      };
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      setMessages(prev => [...prev, aiMessage]);
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              setIsStreaming(false);
+              return;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              
+              if (parsed.type === 'metadata') {
+                // Update message with sources and metadata
+                setMessages(prev => prev.map(msg => 
+                  msg.id === aiMessageId 
+                    ? { ...msg, sources: parsed.sources || [] }
+                    : msg
+                ));
+              } else if (parsed.type === 'content') {
+                // Append content to the AI message
+                setMessages(prev => prev.map(msg => 
+                  msg.id === aiMessageId 
+                    ? { ...msg, content: msg.content + parsed.content }
+                    : msg
+                ));
+              } else if (parsed.type === 'error') {
+                // Handle error
+                setMessages(prev => prev.map(msg => 
+                  msg.id === aiMessageId 
+                    ? { ...msg, content: `❌ ${parsed.content}` }
+                    : msg
+                ));
+                setIsStreaming(false);
+                return;
+              }
+            } catch (parseError) {
+              console.error('Error parsing streaming data:', parseError);
+            }
+          }
+        }
+      }
     } catch (error) {
-      const errorMessage = {
-        id: Date.now() + 1,
-        type: 'ai',
-        content: `❌ Query failed: ${error.message}`,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages(prev => prev.map(msg => 
+        msg.id === aiMessageId 
+          ? { ...msg, content: `❌ Query failed: ${error.message}` }
+          : msg
+      ));
     } finally {
-      setIsTyping(false);
+      setIsStreaming(false);
     }
   };
 
@@ -520,7 +584,7 @@ const App = () => {
               </div>
             ))}
             
-            {isTyping && (
+            {isTyping && !isStreaming && (
               <div className="flex gap-4">
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
                   <Bot className="w-4 h-4 text-white" />
@@ -577,12 +641,12 @@ const App = () => {
                   }}
                   placeholder={`Ask about ${selectedClient}'s case, goals, or session history...`}
                   className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                  disabled={isTyping}
+                  disabled={isTyping || isStreaming}
                 />
               </div>
               <button
                 onClick={handleSubmit}
-                disabled={!inputValue.trim() || isTyping}
+                disabled={!inputValue.trim() || isTyping || isStreaming}
                 className="px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
               >
                 <Send className="w-4 h-4" />

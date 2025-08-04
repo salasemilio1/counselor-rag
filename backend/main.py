@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Request, Query, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 import shutil
 import logging
+import json
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -90,6 +92,95 @@ def query_docs(req: QueryRequest):
             confidence=0.0,
             chunks_used=0
         )
+
+@app.post("/query/stream")
+def query_docs_stream(req: QueryRequest):
+    """Stream the response for real-time text generation"""
+    def generate_stream():
+        try:
+            # Step 1: Retrieve chunks (same as regular query)
+            relevant_chunks = engine.retrieve_relevant_chunks(
+                req.client_id, 
+                req.query, 
+                meeting_ids=req.meeting_ids
+            )
+
+            if not relevant_chunks:
+                # Send metadata first
+                metadata = {
+                    "type": "metadata",
+                    "sources": [],
+                    "confidence": 0.0,
+                    "chunks_used": 0
+                }
+                yield f"data: {json.dumps(metadata)}\n\n"
+                
+                # Send error message
+                error_response = {
+                    "type": "content",
+                    "content": f"I don't have any relevant information about '{req.query}' for this client."
+                }
+                yield f"data: {json.dumps(error_response)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            # Step 2: Construct context and prompt
+            context = "\n\n".join(chunk['content'] for chunk in relevant_chunks)
+            sources = [
+                {
+                    'meeting_id': chunk['metadata'].get('meeting_id', 'unknown'),
+                    'date': chunk['metadata'].get('date', 'unknown'),
+                    'chunk_id': chunk['id']
+                } for chunk in relevant_chunks
+            ]
+
+            # Calculate confidence
+            import numpy as np
+            avg_similarity = np.mean([
+                max(0.0, min(1.0, 1 - chunk.get('distance', 1)))
+                for chunk in relevant_chunks
+            ])
+
+            # Send metadata first
+            metadata = {
+                "type": "metadata",
+                "sources": sources,
+                "confidence": float(avg_similarity),
+                "chunks_used": len(relevant_chunks)
+            }
+            yield f"data: {json.dumps(metadata)}\n\n"
+
+            # Step 3: Stream the response
+            client_name = req.client_id.capitalize()
+            prompt = engine.llm_wrapper.build_structured_prompt(req.query, context, client_name)
+            
+            for token in engine.llm_wrapper.generate_text_stream(prompt):
+                response_data = {
+                    "type": "content",
+                    "content": token
+                }
+                yield f"data: {json.dumps(response_data)}\n\n"
+            
+            yield "data: [DONE]\n\n"
+
+        except Exception as e:
+            logger.exception("Error in streaming query")
+            error_response = {
+                "type": "error",
+                "content": f"Error processing query: {str(e)}"
+            }
+            yield f"data: {json.dumps(error_response)}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream"
+        }
+    )
 
 @app.post("/upload")
 async def upload_file(client_id: str = Form(...), files: List[UploadFile] = File(...)):

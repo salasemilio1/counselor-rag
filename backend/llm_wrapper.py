@@ -107,6 +107,30 @@ Respond ONLY with a valid JSON object, for example:
             logger.error(f"LLM generation failed: {e}")
             return "I'm sorry, I couldn't generate a response due to an internal error."
 
+    def generate_text_stream(self, prompt: str):
+        """Generator that yields streaming tokens for web responses."""
+        try:
+            response = requests.post(self.endpoint, json={
+                "model": self.model_name,
+                "prompt": prompt,
+                "stream": True
+            }, stream=True)
+            response.raise_for_status()
+            
+            for line in response.iter_lines(decode_unicode=True):
+                if line:
+                    try:
+                        data = json.loads(line)
+                        token = data.get("response", "")
+                        if token:
+                            yield token
+                    except json.JSONDecodeError:
+                        logger.warning(f"Malformed line in stream: {line}")
+                        continue
+        except Exception as e:
+            logger.error(f"LLM streaming failed: {e}")
+            yield "I'm sorry, I couldn't generate a response due to an internal error."
+
     def build_structured_prompt(self, query: str, context: str, client_name: str) -> str:
         """Format the prompt to guide the LLM into giving structured, templated output."""
         return f'''
