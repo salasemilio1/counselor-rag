@@ -152,8 +152,10 @@ class RAGEngine:
                 # Generate embedding
                 if chunk.embedding is None:
                     embedding = self.embed_text(chunk.content)
-                if not embedding:
-                    continue
+                    if not embedding:
+                        continue
+                else:
+                    embedding = chunk.embedding
 
                 chunk_ids.append(chunk.chunk_id)
                 embeddings.append(embedding)
@@ -371,9 +373,10 @@ class RAGEngine:
             # Apply threshold but ensure minimum chunks
             filtered = [chunk for chunk in chunks if chunk['composite_score'] >= threshold]
 
-            # If too few chunks pass threshold, take top min_chunks anyway
-            if len(filtered) < min_chunks and len(chunks) >= min_chunks:
-                filtered = chunks[:min_chunks]
+            # If too few chunks pass threshold, take what we have up to min_chunks
+            if len(filtered) < min_chunks:
+                # Take the best available chunks up to min_chunks or all available chunks
+                filtered = chunks[:min(min_chunks, len(chunks))]
 
             return filtered
 

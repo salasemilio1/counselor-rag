@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, Query, HTTPException, UploadFile, File, Form
 import shutil
+import logging
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,6 +9,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 from rag_engine import RAGEngine
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 

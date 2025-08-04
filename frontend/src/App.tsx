@@ -255,7 +255,7 @@ const App = () => {
       }
 
       // Trigger ingestion after upload
-      const ingestRes = await fetch(`${BACKEND_URL}/ingest/${clientId}`, {
+      const ingestRes = await fetch(`${BACKEND_URL}/ingest/${clientId}?force=true`, {
         method: "POST"
       });
       const ingestData = await ingestRes.json();
