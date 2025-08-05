@@ -261,5 +261,87 @@ def reset_client_data(client_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/clients/{client_id}/documents")
+def list_client_documents(client_id: str):
+    """Get detailed list of all documents for a client"""
+    try:
+        client_dir = engine.data_dir / "clients" / client_id
+        if not client_dir.exists():
+            return {"documents": []}
+        
+        documents = []
+        for file_path in client_dir.glob("*.txt"):
+            try:
+                stat = file_path.stat()
+                # Extract info from filename
+                filename_info = engine.document_loader._extract_client_info_from_filename(file_path.name)
+                
+                documents.append({
+                    "filename": file_path.name,
+                    "file_path": str(file_path),
+                    "size": stat.st_size,
+                    "modified": stat.st_mtime,
+                    "meeting_id": filename_info.get("meeting_id", "unknown") if filename_info else "unknown",
+                    "date": filename_info.get("date", "unknown") if filename_info else "unknown"
+                })
+            except Exception as e:
+                logger.error(f"Error processing file {file_path}: {e}")
+                continue
+        
+        # Sort by modification time (newest first)
+        documents.sort(key=lambda x: x["modified"], reverse=True)
+        
+        return {"documents": documents}
+    except Exception as e:
+        logger.error(f"Error listing documents for {client_id}: {e}")
+        return {"documents": [], "error": str(e)}
+
+@app.delete("/clients/{client_id}/documents/{filename}")
+def delete_client_document(client_id: str, filename: str):
+    """Delete a specific document for a client"""
+    try:
+        client_dir = engine.data_dir / "clients" / client_id
+        file_path = client_dir / filename
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Delete the file
+        file_path.unlink()
+        
+        # Remove from vector database
+        collection = engine._get_client_collection(client_id)
+        
+        # Find and delete chunks related to this file
+        if CHROMA_AVAILABLE:
+            try:
+                # Get all documents to find ones from this file
+                all_data = collection.get(include=["metadatas", "ids"])
+                ids_to_delete = []
+                
+                for i, metadata in enumerate(all_data.get("metadatas", [])):
+                    if metadata.get("original_filename") == filename:
+                        ids_to_delete.append(all_data["ids"][i])
+                
+                if ids_to_delete:
+                    collection.delete(ids=ids_to_delete)
+                    logger.info(f"Deleted {len(ids_to_delete)} chunks for file {filename}")
+            except Exception as e:
+                logger.error(f"Error removing chunks from vector DB: {e}")
+        
+        # Update metadata cache
+        cache_key = f"{client_id}_{filename}"
+        if cache_key in engine.document_loader.metadata_cache:
+            del engine.document_loader.metadata_cache[cache_key]
+            engine.document_loader._save_metadata_cache()
+        
+        return {"status": "success", "message": f"Document {filename} deleted successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting document {filename} for {client_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":  # Fixed the syntax error
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X } from 'lucide-react';
+import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle } from 'lucide-react';
 
 const App = () => {
   const [selectedClient, setSelectedClient] = useState('');
@@ -13,6 +13,13 @@ const App = () => {
   // New: track selected source document for viewing
   const [selectedSource, setSelectedSource] = useState(null);
   const [sourceText, setSourceText] = useState('');
+  
+  // Document management state
+  const [showDocumentManager, setShowDocumentManager] = useState(false);
+  const [allClientDocuments, setAllClientDocuments] = useState([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   // New: fetch and load selected source document text
   useEffect(() => {
     const fetchSourceText = async () => {
@@ -364,6 +371,94 @@ const App = () => {
     }).format(timestamp);
   };
 
+  // Document management functions
+  const fetchAllClientDocuments = async () => {
+    if (!selectedClient) return;
+    
+    setLoadingDocuments(true);
+    try {
+      const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+      const res = await fetch(`${BACKEND_URL}/clients/${clientId}/documents`);
+      const data = await res.json();
+      
+      if (data.error) {
+        console.error('Error fetching documents:', data.error);
+        setAllClientDocuments([]);
+      } else {
+        setAllClientDocuments(data.documents || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch documents:', error);
+      setAllClientDocuments([]);
+    } finally {
+      setLoadingDocuments(false);
+    }
+  };
+
+  const handleDeleteDocument = async (filename) => {
+    if (!selectedClient) return;
+    
+    try {
+      const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+      const res = await fetch(`${BACKEND_URL}/clients/${clientId}/documents/${encodeURIComponent(filename)}`, {
+        method: 'DELETE'
+      });
+      
+      if (res.ok) {
+        // Refresh document list
+        await fetchAllClientDocuments();
+        // Refresh the quick select documents too
+        const quickRes = await fetch(`${BACKEND_URL}/meetings/${clientId}`);
+        const quickData = await quickRes.json();
+        const realDocs = (quickData.meetings || quickData.files || []).map((doc, index) => ({
+          id: doc.id || `doc_${index}`,
+          name: doc.name || doc.filename || `Doc ${index + 1}`,
+          filename: doc.filename || doc.name
+        }));
+        setDocuments(realDocs);
+        
+        // Show success message
+        setMessages(prev => [...prev, {
+          id: Date.now(),
+          type: 'ai',
+          content: `✅ Successfully deleted document "${filename}"`,
+          timestamp: new Date()
+        }]);
+      } else {
+        throw new Error('Failed to delete document');
+      }
+    } catch (error) {
+      console.error('Error deleting document:', error);
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        type: 'ai',
+        content: `❌ Failed to delete document "${filename}": ${error.message}`,
+        timestamp: new Date()
+      }]);
+    } finally {
+      setShowDeleteConfirm(false);
+      setDocumentToDelete(null);
+    }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const formatDate = (timestamp) => {
+    return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-800';
@@ -501,6 +596,20 @@ const App = () => {
                     )}
                   </div>
                 </div>
+              )}
+              
+              {/* Document Management */}
+              {selectedClient && (
+                <button
+                  onClick={() => {
+                    setShowDocumentManager(true);
+                    fetchAllClientDocuments();
+                  }}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Manage documents"
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
               )}
               
               {/* File Upload */}
@@ -678,6 +787,147 @@ const App = () => {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Document Management Modal */}
+      {showDocumentManager && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg w-full max-w-4xl h-3/4 flex flex-col">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Settings className="w-6 h-6 text-blue-600" />
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900">Document Management</h2>
+                    <p className="text-sm text-gray-600">Manage documents for {selectedClient}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowDocumentManager(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 p-6 overflow-y-auto">
+              {loadingDocuments ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-center">
+                    <div className="w-8 h-8 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin mx-auto mb-3"></div>
+                    <p className="text-gray-600">Loading documents...</p>
+                  </div>
+                </div>
+              ) : allClientDocuments.length === 0 ? (
+                <div className="text-center py-12">
+                  <FileText className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                  <p className="text-gray-600">No documents found for this client</p>
+                  <p className="text-sm text-gray-500 mt-1">Upload some documents to get started</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">
+                      Documents ({allClientDocuments.length})
+                    </h3>
+                  </div>
+                  
+                  {allClientDocuments.map((doc, index) => (
+                    <div key={index} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <FileText className="w-4 h-4 text-blue-600" />
+                            <h4 className="font-medium text-gray-900">{doc.filename}</h4>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                            <div>
+                              <span className="font-medium">Meeting ID:</span> {doc.meeting_id}
+                            </div>
+                            <div>
+                              <span className="font-medium">Date:</span> {doc.date}
+                            </div>
+                            <div>
+                              <span className="font-medium">Size:</span> {formatFileSize(doc.size)}
+                            </div>
+                            <div>
+                              <span className="font-medium">Modified:</span> {formatDate(doc.modified)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-4">
+                          <button
+                            onClick={() => {
+                              setSelectedSource({filename: doc.filename});
+                              setShowDocumentManager(false);
+                            }}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="View document"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setDocumentToDelete(doc);
+                              setShowDeleteConfirm(true);
+                            }}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete document"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && documentToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Delete Document</h3>
+                <p className="text-sm text-gray-600">This action cannot be undone</p>
+              </div>
+            </div>
+            
+            <p className="text-gray-700 mb-6">
+              Are you sure you want to delete <strong>"{documentToDelete.filename}"</strong>? 
+              This will permanently remove the document and all associated data from the system.
+            </p>
+            
+            <div className="flex items-center gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDocumentToDelete(null);
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteDocument(documentToDelete.filename)}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete Document
+              </button>
             </div>
           </div>
         </div>
