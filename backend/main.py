@@ -374,8 +374,22 @@ def save_chat(request: SaveChatRequest):
         chats_dir = engine.data_dir / "chats" / request.client_id
         chats_dir.mkdir(parents=True, exist_ok=True)
         
-        # Generate session ID if not provided
-        session_id = request.session_id or str(uuid.uuid4())
+        # Check if this is an update to existing chat or new chat
+        if request.session_id:
+            session_id = request.session_id
+            chat_file = chats_dir / f"{session_id}.json"
+            
+            # Load existing data to preserve created_at
+            if chat_file.exists():
+                with open(chat_file, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                created_at = existing_data.get('created_at', datetime.now().isoformat())
+            else:
+                created_at = datetime.now().isoformat()
+        else:
+            # New chat - generate new session ID
+            session_id = str(uuid.uuid4())
+            created_at = datetime.now().isoformat()
         
         # Create chat session
         chat_session = {
@@ -383,7 +397,7 @@ def save_chat(request: SaveChatRequest):
             "client_id": request.client_id,
             "title": request.title,
             "messages": request.messages,
-            "created_at": datetime.now().isoformat(),
+            "created_at": created_at,
             "updated_at": datetime.now().isoformat()
         }
         

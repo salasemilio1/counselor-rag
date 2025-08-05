@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle, History, Save, MoreHorizontal } from 'lucide-react';
+import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle, History, Save, MoreHorizontal, Moon, Sun, PanelLeft, Square, Minus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 const App = () => {
@@ -29,6 +29,21 @@ const App = () => {
   const [loadingChats, setLoadingChats] = useState(false);
   const [chatToDelete, setChatToDelete] = useState(null);
   const [showDeleteChatConfirm, setShowDeleteChatConfirm] = useState(false);
+  const [lastSavedMessageCount, setLastSavedMessageCount] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Settings state
+  const [showSettings, setShowSettings] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode');
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  // Sidebar state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    const saved = localStorage.getItem('sidebarCollapsed');
+    return saved ? JSON.parse(saved) : false;
+  });
   // New: fetch and load selected source document text
   useEffect(() => {
     const fetchSourceText = async () => {
@@ -108,7 +123,7 @@ const App = () => {
       }
 
       const dynamicClients = data.clients.map((name) => ({
-        name,
+        name: name.charAt(0).toUpperCase() + name.slice(1),
         lastSession: 'Unknown',
         status: 'active',
         nextSession: 'Not scheduled'
@@ -138,6 +153,21 @@ const App = () => {
     fetchClients();
   }, []);
 
+  // Dark mode effect
+  useEffect(() => {
+    localStorage.setItem('darkMode', JSON.stringify(darkMode));
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
+
+  // Sidebar collapse effect
+  useEffect(() => {
+    localStorage.setItem('sidebarCollapsed', JSON.stringify(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
   // Save chat before page unload
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -153,16 +183,19 @@ const App = () => {
     };
   }, [selectedClient, messages]);
 
-  // Periodic auto-save every 30 seconds if there are unsaved changes
+  // Periodic auto-save every 2 minutes if there are unsaved changes
   useEffect(() => {
     if (!selectedClient || messages.length <= 1) return;
 
     const autoSaveInterval = setInterval(() => {
-      saveCurrentChat();
-    }, 30000); // 30 seconds
+      // Only save if there are new messages since last save
+      if (messages.length > lastSavedMessageCount) {
+        saveCurrentChat();
+      }
+    }, 120000); // 2 minutes
 
     return () => clearInterval(autoSaveInterval);
-  }, [selectedClient, messages]);
+  }, [selectedClient, messages, lastSavedMessageCount]);
 
   // Add Client handler
   const handleAddClient = async () => {
@@ -181,7 +214,7 @@ const App = () => {
       setMessages([{
         id: Date.now(),
         type: "ai",
-        content: `Great! I've set up a profile for ${name}. Upload some session notes when you're ready, and I'll help you keep track of their progress and identify key themes.`,
+        content: `Great! I've set up a profile for ${name.charAt(0).toUpperCase() + name.slice(1)}. Upload some session notes when you're ready, and I'll help you keep track of their progress and identify key themes.`,
         timestamp: new Date()
       }]);
     } catch (err) {
@@ -319,11 +352,12 @@ const App = () => {
     
     setSelectedClient(clientName);
     setCurrentSessionId(null);
+    setLastSavedMessageCount(0);
     setMessages([
       {
         id: 1,
         type: 'ai',
-        content: `Ready to help you prep for ${clientName}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
+        content: `Ready to help you prep for ${clientName.charAt(0).toUpperCase() + clientName.slice(1)}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
         timestamp: new Date()
       }
     ]);
@@ -384,7 +418,7 @@ const App = () => {
       const successMessage = {
         id: Date.now(),
         type: "ai",
-        content: `Perfect! I've processed ${files.length} file(s) for ${selectedClient}. I'm now familiar with their recent sessions and ready to help you prepare for your next meeting.`,
+        content: `Perfect! I've processed ${files.length} file(s) for ${selectedClient.charAt(0).toUpperCase() + selectedClient.slice(1)}. I'm now familiar with their recent sessions and ready to help you prepare for your next meeting.`,
         timestamp: new Date()
       };
       setMessages((prev) => [...prev, successMessage]);
@@ -517,11 +551,19 @@ const App = () => {
       : firstMessage;
   };
 
-  const saveCurrentChat = async () => {
+  const saveCurrentChat = async (forceRefresh = false) => {
     if (!selectedClient || messages.length === 0) {
       console.log('Skipping save: no client or messages');
       return;
     }
+    
+    // Prevent duplicate saves if already saving or no new messages
+    if (isSaving || (messages.length === lastSavedMessageCount && currentSessionId)) {
+      console.log('Skipping save: already saving or no new messages');
+      return;
+    }
+    
+    setIsSaving(true);
     
     try {
       const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
@@ -550,12 +592,19 @@ const App = () => {
         const data = await response.json();
         console.log(`Chat saved successfully with session ID: ${data.session_id}`);
         setCurrentSessionId(data.session_id);
-        await fetchClientChats();
+        setLastSavedMessageCount(messages.length);
+        
+        // Only refresh chat list if explicitly requested (e.g., from manual save)
+        if (forceRefresh) {
+          await fetchClientChats();
+        }
       } else {
         console.error('Failed to save chat:', response.statusText);
       }
     } catch (error) {
       console.error('Error saving chat:', error);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -601,6 +650,7 @@ const App = () => {
         
         setMessages(loadedMessages);
         setCurrentSessionId(sessionId);
+        setLastSavedMessageCount(loadedMessages.length); // Mark as already saved
         setShowChatHistory(false);
       }
     } catch (error) {
@@ -624,7 +674,7 @@ const App = () => {
           setMessages([{
             id: 1,
             type: 'ai',
-            content: `Ready to help you prep for ${selectedClient}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
+            content: `Ready to help you prep for ${selectedClient.charAt(0).toUpperCase() + selectedClient.slice(1)}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
             timestamp: new Date()
           }]);
           setCurrentSessionId(null);
@@ -647,10 +697,11 @@ const App = () => {
     setMessages([{
       id: 1,
       type: 'ai',
-      content: `Ready to help you prep for ${selectedClient}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
+      content: `Ready to help you prep for ${selectedClient.charAt(0).toUpperCase() + selectedClient.slice(1)}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
       timestamp: new Date()
     }]);
     setCurrentSessionId(null);
+    setLastSavedMessageCount(0);
     setSelectedDocs([]);
   };
 
@@ -664,9 +715,42 @@ const App = () => {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
+      {/* VSCode-style Window Controls */}
+      <div className="fixed top-0 left-0 right-0 h-8 bg-gray-100 dark:bg-gray-900 flex items-center justify-between px-4 z-50 border-b border-gray-200 dark:border-gray-800 select-none">
+        <div className="flex items-center gap-2">
+          {/* Traffic Light Buttons */}
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-red-500 flex items-center justify-center group hover:bg-red-600 transition-colors">
+              <X className="w-2 h-2 text-red-900 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <div className="w-3 h-3 rounded-full bg-yellow-500 flex items-center justify-center group hover:bg-yellow-600 transition-colors">
+              <Minus className="w-2 h-2 text-yellow-900 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <div className="w-3 h-3 rounded-full bg-green-500 flex items-center justify-center group hover:bg-green-600 transition-colors">
+              <Square className="w-1.5 h-1.5 text-green-900 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+          </div>
+          
+          {/* Sidebar Toggle */}
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="ml-4 p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+            title={sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
+          >
+            <PanelLeft className="w-4 h-4" />
+          </button>
+        </div>
+        
+        <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          CounselAI
+        </div>
+        
+        <div className="w-16"></div> {/* Spacer for centering */}
+      </div>
+
       {/* Sidebar */}
-      <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
+      <aside className={`${sidebarCollapsed ? 'w-0' : 'w-80'} bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 overflow-hidden pt-8`}>
         {/* Sidebar Header */}
         <div className="p-6 border-b border-gray-200">
           <div className="flex items-center gap-3 mb-4">
@@ -674,8 +758,8 @@ const App = () => {
               <MessageCircle className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-gray-900">CounselAI</h1>
-              <p className="text-sm text-gray-500">Session Preparation</p>
+              <h1 className="text-lg font-semibold text-gray-900 dark:text-white">CounselAI</h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Session Preparation</p>
             </div>
           </div>
           <div className="flex flex-row">
@@ -725,29 +809,29 @@ const App = () => {
           </div>
 
           <div className="space-y-2">
-            <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wide px-2">Clients</h3>
+            <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide px-2">Clients</h3>
             {clientList.map((client) => (
               <div
                 key={client.name}
                 onClick={() => handleClientSelect(client.name)}
-                className={`p-3 rounded-lg cursor-pointer transition-all hover:bg-gray-50 ${
+                className={`p-3 rounded-lg cursor-pointer transition-all hover:bg-gray-50 dark:hover:bg-gray-800 ${
                   selectedClient === client.name 
-                    ? 'bg-blue-50 border border-blue-200' 
+                    ? 'bg-blue-50 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-700' 
                     : 'border border-transparent'
                 }`}
               >
                 <div className="flex items-start justify-between mb-2">
-                  <h4 className="font-medium text-gray-900 text-sm">{client.name}</h4>
+                  <h4 className="font-medium text-gray-900 dark:text-white text-sm">{client.name}</h4>
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(client.status)}`}>
                     {client.status}
                   </span>
                 </div>
                 <div className="space-y-1">
-                  <div className="flex items-center gap-1 text-xs text-gray-500">
+                  <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                     <Clock className="w-3 h-3" />
                     Last: {client.lastSession}
                   </div>
-                  <div className="flex items-center gap-1 text-xs text-gray-600">
+                  <div className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300">
                     <Calendar className="w-3 h-3" />
                     Next: {client.nextSession}
                   </div>
@@ -759,17 +843,17 @@ const App = () => {
       </aside>
 
       {/* Main Chat Area */}
-      <div className="flex flex-col flex-1">
+      <div className={`flex flex-col flex-1 pt-8 transition-all duration-300 ${sidebarCollapsed ? 'ml-0' : ''}`}>
         {/* Chat Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
                 <User className="w-4 h-4 text-gray-600" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">{selectedClient}</h2>
-                <p className="text-sm text-gray-500">Session Preparation Assistant</p>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{selectedClient ? selectedClient.charAt(0).toUpperCase() + selectedClient.slice(1) : ''}</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Session Preparation Assistant</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -802,14 +886,28 @@ const App = () => {
               {/* Manual Save */}
               {selectedClient && messages.length > 1 && (
                 <button
-                  onClick={saveCurrentChat}
-                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  onClick={() => saveCurrentChat(true)}
+                  disabled={isSaving}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
                   title="Save current chat"
                 >
-                  <Save className="w-5 h-5" />
+                  {isSaving ? (
+                    <div className="w-5 h-5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                  ) : (
+                    <Save className="w-5 h-5" />
+                  )}
                 </button>
               )}
               
+              {/* Settings */}
+              <button
+                onClick={() => setShowSettings(true)}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Settings"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+
               {/* Document Management */}
               {selectedClient && (
                 <button
@@ -820,7 +918,7 @@ const App = () => {
                   className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                   title="Manage documents"
                 >
-                  <Settings className="w-5 h-5" />
+                  <MoreHorizontal className="w-5 h-5" />
                 </button>
               )}
               
@@ -878,13 +976,13 @@ const App = () => {
                   <div className={`px-4 py-3 rounded-2xl ${
                     message.type === 'user'
                       ? 'bg-blue-600 text-white'
-                      : 'bg-white border border-gray-200 text-gray-900'
+                      : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
                   }`}>
                     <div className="text-sm leading-relaxed">
                       <ReactMarkdown
                         components={{
                           p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                          strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                          strong: ({children}) => <strong className="font-semibold text-gray-900 dark:text-gray-100">{children}</strong>,
                           em: ({children}) => <em className="italic">{children}</em>,
                           ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
                           ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
@@ -943,7 +1041,7 @@ const App = () => {
         </div>
 
         {/* Input Area */}
-        <div className="border-t border-gray-200 bg-white p-4">
+        <div className="border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
           <div className="max-w-4xl mx-auto">
             <div className="flex gap-3">
               <div className="flex-1 relative">
@@ -958,7 +1056,7 @@ const App = () => {
                       handleSubmit(e);
                     }
                   }}
-                  placeholder={`What would you like to know about ${selectedClient}? Ask about patterns, progress, goals, or specific sessions...`}
+                  placeholder={selectedClient ? `What would you like to know about ${selectedClient.charAt(0).toUpperCase() + selectedClient.slice(1)}? Ask about patterns, progress, goals, or specific sessions...` : 'Select a client to start asking questions...'}
                   className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                   disabled={isTyping || isStreaming}
                 />
@@ -980,13 +1078,13 @@ const App = () => {
 
       {/* Document Viewer Side Panel */}
       {selectedSource && (
-        <div className="w-96 bg-white border-l border-gray-200 flex flex-col">
+        <div className="w-96 bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col pt-8">
           {/* Panel Header */}
-          <div className="p-4 border-b border-gray-200">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-800">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <FileText className="w-5 h-5 text-blue-600" />
-                <h3 className="font-semibold text-gray-900">Document Viewer</h3>
+                <h3 className="font-semibold text-gray-900 dark:text-white">Document Viewer</h3>
               </div>
               <button
                 onClick={() => setSelectedSource(null)}
@@ -996,14 +1094,14 @@ const App = () => {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-sm text-gray-600 mt-1 truncate" title={selectedSource.filename}>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 truncate" title={selectedSource.filename}>
               {selectedSource.filename}
             </p>
           </div>
           
           {/* Document Content */}
           <div className="flex-1 p-4 overflow-y-auto">
-            <div className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap font-mono bg-gray-50 p-4 rounded-md border">
+            <div className="text-sm leading-relaxed text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-800 p-4 rounded-md border dark:border-gray-700">
               {sourceText || (
                 <div className="flex items-center justify-center py-8 text-gray-500">
                   <div className="text-center">
@@ -1234,6 +1332,104 @@ const App = () => {
                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               >
                 Delete Chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-900 rounded-lg w-full max-w-md">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-gray-200 dark:border-gray-800">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Settings className="w-6 h-6 text-blue-600" />
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Settings</h2>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Customize your experience</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-6">
+              {/* Theme Settings */}
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Appearance</h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      {darkMode ? (
+                        <Moon className="w-5 h-5 text-blue-600" />
+                      ) : (
+                        <Sun className="w-5 h-5 text-yellow-500" />
+                      )}
+                      <div>
+                        <p className="font-medium text-gray-900 dark:text-white">Dark Mode</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Toggle dark theme</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setDarkMode(!darkMode)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        darkMode ? 'bg-blue-600' : 'bg-gray-200'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          darkMode ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Future Integration Placeholders */}
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Integrations</h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg opacity-50">
+                    <div className="flex items-center gap-3">
+                      <Calendar className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="font-medium text-gray-700">Calendar Integration</p>
+                        <p className="text-sm text-gray-500">Coming soon</p>
+                      </div>
+                    </div>
+                    <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">Soon</span>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg opacity-50">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="font-medium text-gray-700">Email Integration</p>
+                        <p className="text-sm text-gray-500">Coming soon</p>
+                      </div>
+                    </div>
+                    <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">Soon</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-6 border-t border-gray-200">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Done
               </button>
             </div>
           </div>
