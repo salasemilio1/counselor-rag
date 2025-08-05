@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle } from 'lucide-react';
+import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle, History, Save, MoreHorizontal } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 const App = () => {
@@ -21,6 +21,14 @@ const App = () => {
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  
+  // Chat management state
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [clientChats, setClientChats] = useState([]);
+  const [showChatHistory, setShowChatHistory] = useState(false);
+  const [loadingChats, setLoadingChats] = useState(false);
+  const [chatToDelete, setChatToDelete] = useState(null);
+  const [showDeleteChatConfirm, setShowDeleteChatConfirm] = useState(false);
   // New: fetch and load selected source document text
   useEffect(() => {
     const fetchSourceText = async () => {
@@ -129,6 +137,32 @@ const App = () => {
   useEffect(() => {
     fetchClients();
   }, []);
+
+  // Save chat before page unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (selectedClient && messages.length > 1) {
+        // Use synchronous save for page unload
+        saveCurrentChat();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [selectedClient, messages]);
+
+  // Periodic auto-save every 30 seconds if there are unsaved changes
+  useEffect(() => {
+    if (!selectedClient || messages.length <= 1) return;
+
+    const autoSaveInterval = setInterval(() => {
+      saveCurrentChat();
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(autoSaveInterval);
+  }, [selectedClient, messages]);
 
   // Add Client handler
   const handleAddClient = async () => {
@@ -270,12 +304,21 @@ const App = () => {
       ));
     } finally {
       setIsStreaming(false);
+      // Auto-save chat after receiving response with longer delay to ensure state is updated
+      setTimeout(() => saveCurrentChat(), 2000);
     }
   };
 
   const handleClientSelect = (clientName) => {
     if (!clientName) return;
+    
+    // Save current chat before switching clients
+    if (selectedClient && messages.length > 1) {
+      saveCurrentChat();
+    }
+    
     setSelectedClient(clientName);
+    setCurrentSessionId(null);
     setMessages([
       {
         id: 1,
@@ -285,6 +328,9 @@ const App = () => {
       }
     ]);
     setSelectedDocs([]);
+    
+    // Load chat history for this client
+    setTimeout(() => fetchClientChats(), 100);
   };
 
   const handleDocSelect = (docId) => {
@@ -460,6 +506,154 @@ const App = () => {
     });
   };
 
+  // Chat management functions
+  const generateChatTitle = (messages) => {
+    const userMessages = messages.filter(msg => msg.type === 'user');
+    if (userMessages.length === 0) return "New Chat";
+    
+    const firstMessage = userMessages[0].content;
+    return firstMessage.length > 40 
+      ? firstMessage.substring(0, 40) + "..." 
+      : firstMessage;
+  };
+
+  const saveCurrentChat = async () => {
+    if (!selectedClient || messages.length === 0) {
+      console.log('Skipping save: no client or messages');
+      return;
+    }
+    
+    try {
+      const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+      const title = generateChatTitle(messages);
+      
+      console.log(`Saving chat for ${clientId}: "${title}" (${messages.length} messages)`);
+      
+      const response = await fetch(`${BACKEND_URL}/chats/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: clientId,
+          session_id: currentSessionId,
+          title: title,
+          messages: messages.map(msg => ({
+            id: msg.id.toString(),
+            type: msg.type,
+            content: msg.content,
+            timestamp: msg.timestamp.toISOString(),
+            sources: msg.sources || null
+          }))
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`Chat saved successfully with session ID: ${data.session_id}`);
+        setCurrentSessionId(data.session_id);
+        await fetchClientChats();
+      } else {
+        console.error('Failed to save chat:', response.statusText);
+      }
+    } catch (error) {
+      console.error('Error saving chat:', error);
+    }
+  };
+
+  const fetchClientChats = async () => {
+    if (!selectedClient) return;
+    
+    setLoadingChats(true);
+    try {
+      const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+      const response = await fetch(`${BACKEND_URL}/chats/${clientId}`);
+      const data = await response.json();
+      
+      if (data.error) {
+        console.error('Error fetching chats:', data.error);
+        setClientChats([]);
+      } else {
+        setClientChats(data.chats || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch chats:', error);
+      setClientChats([]);
+    } finally {
+      setLoadingChats(false);
+    }
+  };
+
+  const loadChatSession = async (sessionId) => {
+    if (!selectedClient) return;
+    
+    try {
+      const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+      const response = await fetch(`${BACKEND_URL}/chats/${clientId}/${sessionId}`);
+      
+      if (response.ok) {
+        const chatData = await response.json();
+        const loadedMessages = chatData.messages.map(msg => ({
+          id: parseInt(msg.id),
+          type: msg.type,
+          content: msg.content,
+          timestamp: new Date(msg.timestamp),
+          sources: msg.sources
+        }));
+        
+        setMessages(loadedMessages);
+        setCurrentSessionId(sessionId);
+        setShowChatHistory(false);
+      }
+    } catch (error) {
+      console.error('Error loading chat session:', error);
+    }
+  };
+
+  const deleteChatSession = async (sessionId) => {
+    if (!selectedClient) return;
+    
+    try {
+      const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+      const response = await fetch(`${BACKEND_URL}/chats/${clientId}/${sessionId}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        await fetchClientChats();
+        if (currentSessionId === sessionId) {
+          // If we deleted the current chat, start a new one
+          setMessages([{
+            id: 1,
+            type: 'ai',
+            content: `Ready to help you prep for ${selectedClient}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
+            timestamp: new Date()
+          }]);
+          setCurrentSessionId(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting chat session:', error);
+    } finally {
+      setShowDeleteChatConfirm(false);
+      setChatToDelete(null);
+    }
+  };
+
+  const startNewChat = () => {
+    // Save current chat before starting new one
+    if (messages.length > 1) {
+      saveCurrentChat();
+    }
+    
+    setMessages([{
+      id: 1,
+      type: 'ai',
+      content: `Ready to help you prep for ${selectedClient}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
+      timestamp: new Date()
+    }]);
+    setCurrentSessionId(null);
+    setSelectedDocs([]);
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-800';
@@ -493,21 +687,27 @@ const App = () => {
             >
               <Plus className="w-5 h-5" />
             </button>
-            <button 
-              onClick={() => {
-                setMessages([{
-                  id: 1,
-                  type: 'ai',
-                  content: `Ready to help you prep for ${selectedClient}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
-                  timestamp: new Date()
-                }]);
-                setSelectedDocs([]);
-              }}
-              className="w-full flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              New Chat
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={startNewChat}
+                className="flex-1 flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                New Chat
+              </button>
+              {selectedClient && (
+                <button
+                  onClick={() => {
+                    setShowChatHistory(true);
+                    fetchClientChats();
+                  }}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Chat History"
+                >
+                  <History className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -597,6 +797,17 @@ const App = () => {
                     )}
                   </div>
                 </div>
+              )}
+              
+              {/* Manual Save */}
+              {selectedClient && messages.length > 1 && (
+                <button
+                  onClick={saveCurrentChat}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Save current chat"
+                >
+                  <Save className="w-5 h-5" />
+                </button>
               )}
               
               {/* Document Management */}
@@ -902,6 +1113,128 @@ const App = () => {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chat History Modal */}
+      {showChatHistory && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg w-full max-w-2xl h-3/4 flex flex-col">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <History className="w-6 h-6 text-blue-600" />
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900">Chat History</h2>
+                    <p className="text-sm text-gray-600">Previous conversations with {selectedClient}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowChatHistory(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 p-6 overflow-y-auto">
+              {loadingChats ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-center">
+                    <div className="w-8 h-8 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin mx-auto mb-3"></div>
+                    <p className="text-gray-600">Loading chat history...</p>
+                  </div>
+                </div>
+              ) : clientChats.length === 0 ? (
+                <div className="text-center py-12">
+                  <MessageCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                  <p className="text-gray-600">No chat history found</p>
+                  <p className="text-sm text-gray-500 mt-1">Start a conversation and it will be saved here</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {clientChats.map((chat) => (
+                    <div key={chat.session_id} className="bg-gray-50 rounded-lg p-4 border border-gray-200 hover:border-gray-300 transition-colors">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 cursor-pointer" onClick={() => loadChatSession(chat.session_id)}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <MessageCircle className="w-4 h-4 text-blue-600" />
+                            <h4 className="font-medium text-gray-900">{chat.title}</h4>
+                            {currentSessionId === chat.session_id && (
+                              <span className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded-full">Current</span>
+                            )}
+                          </div>
+                          <div className="text-sm text-gray-600 space-y-1">
+                            <div>{chat.message_count} messages</div>
+                            <div>Updated: {new Date(chat.updated_at).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}</div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setChatToDelete(chat);
+                            setShowDeleteChatConfirm(true);
+                          }}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Delete chat"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Chat Confirmation Dialog */}
+      {showDeleteChatConfirm && chatToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Delete Chat</h3>
+                <p className="text-sm text-gray-600">This action cannot be undone</p>
+              </div>
+            </div>
+            
+            <p className="text-gray-700 mb-6">
+              Are you sure you want to delete the chat <strong>"{chatToDelete.title}"</strong>? 
+              This will permanently remove the conversation history.
+            </p>
+            
+            <div className="flex items-center gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowDeleteChatConfirm(false);
+                  setChatToDelete(null);
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteChatSession(chatToDelete.session_id)}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete Chat
+              </button>
             </div>
           </div>
         </div>

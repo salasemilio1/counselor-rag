@@ -66,3 +66,4 @@ dist-ssr
 *.sln
 *.sw?
 /data/metadata
+/data/chats

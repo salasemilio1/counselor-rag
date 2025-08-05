@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 from rag_engine import RAGEngine
+from datetime import datetime, timedelta
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,27 @@ class QueryResponse(BaseModel):
 
 class NewClientRequest(BaseModel):
     client_id: str
+
+class ChatMessage(BaseModel):
+    id: str
+    type: str  # 'user' or 'ai'
+    content: str
+    timestamp: str
+    sources: Optional[List[dict]] = None
+
+class ChatSession(BaseModel):
+    session_id: str
+    client_id: str
+    title: str
+    messages: List[ChatMessage]
+    created_at: str
+    updated_at: str
+
+class SaveChatRequest(BaseModel):
+    client_id: str
+    session_id: Optional[str] = None
+    title: str
+    messages: List[dict]
 
 # --- Routes ---
 @app.get("/health")
@@ -341,6 +364,117 @@ def delete_client_document(client_id: str, filename: str):
         raise
     except Exception as e:
         logger.error(f"Error deleting document {filename} for {client_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Chat management endpoints
+@app.post("/chats/save")
+def save_chat(request: SaveChatRequest):
+    """Save or update a chat session"""
+    try:
+        chats_dir = engine.data_dir / "chats" / request.client_id
+        chats_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate session ID if not provided
+        session_id = request.session_id or str(uuid.uuid4())
+        
+        # Create chat session
+        chat_session = {
+            "session_id": session_id,
+            "client_id": request.client_id,
+            "title": request.title,
+            "messages": request.messages,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        # Save to file
+        chat_file = chats_dir / f"{session_id}.json"
+        with open(chat_file, 'w', encoding='utf-8') as f:
+            json.dump(chat_session, f, indent=2, default=str)
+        
+        return {"status": "success", "session_id": session_id}
+    
+    except Exception as e:
+        logger.error(f"Error saving chat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/chats/{client_id}")
+def get_client_chats(client_id: str):
+    """Get all chat sessions for a client"""
+    try:
+        chats_dir = engine.data_dir / "chats" / client_id
+        if not chats_dir.exists():
+            return {"chats": []}
+        
+        chats = []
+        for chat_file in chats_dir.glob("*.json"):
+            try:
+                with open(chat_file, 'r', encoding='utf-8') as f:
+                    chat_data = json.load(f)
+                    
+                # Clean up old chats based on settings (default 7 days)
+                created_at = datetime.fromisoformat(chat_data.get('created_at', datetime.now().isoformat()))
+                if datetime.now() - created_at > timedelta(days=7):  # TODO: Make configurable
+                    chat_file.unlink()  # Delete old chat
+                    continue
+                    
+                # Add summary info
+                chats.append({
+                    "session_id": chat_data["session_id"],
+                    "title": chat_data["title"],
+                    "created_at": chat_data["created_at"],
+                    "updated_at": chat_data["updated_at"],
+                    "message_count": len(chat_data.get("messages", []))
+                })
+            except Exception as e:
+                logger.error(f"Error loading chat file {chat_file}: {e}")
+                continue
+        
+        # Sort by updated time (newest first)
+        chats.sort(key=lambda x: x["updated_at"], reverse=True)
+        
+        return {"chats": chats}
+    
+    except Exception as e:
+        logger.error(f"Error getting chats for {client_id}: {e}")
+        return {"chats": [], "error": str(e)}
+
+@app.get("/chats/{client_id}/{session_id}")
+def get_chat_session(client_id: str, session_id: str):
+    """Get a specific chat session"""
+    try:
+        chat_file = engine.data_dir / "chats" / client_id / f"{session_id}.json"
+        
+        if not chat_file.exists():
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        with open(chat_file, 'r', encoding='utf-8') as f:
+            chat_data = json.load(f)
+        
+        return chat_data
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting chat session {session_id} for {client_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/chats/{client_id}/{session_id}")
+def delete_chat_session(client_id: str, session_id: str):
+    """Delete a specific chat session"""
+    try:
+        chat_file = engine.data_dir / "chats" / client_id / f"{session_id}.json"
+        
+        if not chat_file.exists():
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        chat_file.unlink()
+        return {"status": "success", "message": "Chat session deleted"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting chat session {session_id} for {client_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":  # Fixed the syntax error
