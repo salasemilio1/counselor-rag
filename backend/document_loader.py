@@ -202,7 +202,8 @@ class DocumentLoader:
                         'title': meeting_note.title,
                         'total_chunks': len(chunks),
                         'client_id': meeting_note.client_id,
-                        'meeting_id': meeting_note.meeting_id
+                        'meeting_id': meeting_note.meeting_id,
+                        'original_filename': meeting_note.metadata.get('original_filename', Path(meeting_note.file_path).name)
                     }
                 )
                 document_chunks.append(chunk)

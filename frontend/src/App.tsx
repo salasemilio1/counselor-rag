@@ -561,19 +561,24 @@ const App = () => {
                   }`}>
                     <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
                     {message.sources && message.sources.length > 0 && (
-                      <div className="mt-2 text-xs text-gray-500">
-                        <strong>Sources:</strong>{" "}
-                        {message.sources.map((src, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setSelectedSource(src)}
-                            className="underline hover:text-blue-700 transition-colors"
-                            type="button"
-                          >
-                            {src.filename || "Unnamed Document"}
-                            {i < message.sources.length - 1 && <span>{", "}</span>}
-                          </button>
-                        ))}
+                      <div className="mt-3 pt-2 border-t border-gray-200">
+                        <div className="flex items-center gap-1 mb-1">
+                          <FileText className="w-3 h-3 text-gray-400" />
+                          <span className="text-xs font-medium text-gray-600">Referenced Documents:</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {message.sources.map((src, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setSelectedSource(src)}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-md border border-blue-200 transition-colors"
+                              type="button"
+                            >
+                              <FileText className="w-3 h-3" />
+                              {src.filename || "Unnamed Document"}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -600,26 +605,6 @@ const App = () => {
             )}
             
             <div ref={messagesEndRef} />
-            {/* Document viewer pane */}
-            {selectedSource && (
-              <div className="border-t border-gray-300 mt-6 pt-4 max-w-4xl mx-auto">
-                <div className="flex justify-between items-center mb-2">
-                  <h4 className="text-sm font-semibold text-gray-700">
-                    Viewing: {selectedSource.filename}
-                  </h4>
-                  <button
-                    onClick={() => setSelectedSource(null)}
-                    className="text-sm text-red-500 hover:underline"
-                    type="button"
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="max-h-60 overflow-y-auto text-sm whitespace-pre-wrap bg-gray-100 p-3 rounded-md border border-gray-200">
-                  {sourceText}
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
@@ -658,6 +643,45 @@ const App = () => {
           </div>
         </div>
       </div>
+
+      {/* Document Viewer Side Panel */}
+      {selectedSource && (
+        <div className="w-96 bg-white border-l border-gray-200 flex flex-col">
+          {/* Panel Header */}
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-600" />
+                <h3 className="font-semibold text-gray-900">Document Viewer</h3>
+              </div>
+              <button
+                onClick={() => setSelectedSource(null)}
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                type="button"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mt-1 truncate" title={selectedSource.filename}>
+              {selectedSource.filename}
+            </p>
+          </div>
+          
+          {/* Document Content */}
+          <div className="flex-1 p-4 overflow-y-auto">
+            <div className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap font-mono bg-gray-50 p-4 rounded-md border">
+              {sourceText || (
+                <div className="flex items-center justify-center py-8 text-gray-500">
+                  <div className="text-center">
+                    <div className="animate-spin w-6 h-6 border-2 border-gray-300 border-t-blue-600 rounded-full mx-auto mb-2"></div>
+                    <p>Loading document...</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

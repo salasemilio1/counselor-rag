@@ -130,7 +130,8 @@ def query_docs_stream(req: QueryRequest):
                 {
                     'meeting_id': chunk['metadata'].get('meeting_id', 'unknown'),
                     'date': chunk['metadata'].get('date', 'unknown'),
-                    'chunk_id': chunk['id']
+                    'chunk_id': chunk['id'],
+                    'filename': chunk['metadata'].get('original_filename', chunk['metadata'].get('source_file', '').split('/')[-1] if chunk['metadata'].get('source_file') else 'unknown')
                 } for chunk in relevant_chunks
             ]
 
