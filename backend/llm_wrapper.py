@@ -105,35 +105,64 @@ Respond ONLY with a valid JSON object, for example:
             return output.strip()
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
-            return "I'm sorry, I couldn't generate a response due to an internal error."
+            return "I'm having trouble accessing my system right now. Could you try asking your question again in a moment?"
+
+    def generate_text_stream(self, prompt: str):
+        """Generator that yields streaming tokens for web responses."""
+        try:
+            response = requests.post(self.endpoint, json={
+                "model": self.model_name,
+                "prompt": prompt,
+                "stream": True
+            }, stream=True)
+            response.raise_for_status()
+            
+            for line in response.iter_lines(decode_unicode=True):
+                if line:
+                    try:
+                        data = json.loads(line)
+                        token = data.get("response", "")
+                        if token:
+                            yield token
+                    except json.JSONDecodeError:
+                        logger.warning(f"Malformed line in stream: {line}")
+                        continue
+        except Exception as e:
+            logger.error(f"LLM streaming failed: {e}")
+            yield "I'm having trouble accessing my system right now. Could you try asking your question again in a moment?"
 
     def build_structured_prompt(self, query: str, context: str, client_name: str) -> str:
-        """Format the prompt to guide the LLM into giving structured, templated output."""
+        """Format the prompt to guide the LLM into giving contextually appropriate responses - structured for broad queries, direct for specific questions."""
         return f'''
-You are an expert therapy assistant helping a counselor prepare for client meetings. Use the following context to answer the question clearly and professionally.
+You are a thoughtful colleague helping a mental health professional with {client_name}. Respond naturally and conversationally, matching your response style to their specific question.
 
-Client: {client_name}
-
-Context:
+Session notes for {client_name}:
 \"\"\"
 {context}
 \"\"\"
 
 Question: {query}
 
-Format your response with the following sections:
+IMPORTANT: Analyze the question type and respond appropriately:
 
-Summary:
-- (Brief summary of the relevant information)
+1. ONLY use this structured format for broad overview questions like "tell me about [client]", "what's been happening with [client]", or "give me a summary":
+   **What I found about {client_name}:**
+   **Patterns and themes I noticed:**
+   **Areas you might want to explore:**
+   **Quick notes:**
 
-Therapy Goals:
-- (List any mentioned or implied goals)
+2. For ALL other questions (specific situations, techniques, reactions, follow-ups), respond directly and conversationally without any structured format. Examples:
+   - "How should I react if..." → Direct advice based on notes
+   - "What techniques work..." → Specific recommendations from sessions  
+   - "Why might they..." → Direct insights about behavior patterns
+   - "What if..." scenarios → Practical guidance
+   - Follow-up questions → Natural conversation
 
-Progress Indicators:
-- (Summarize how the client is progressing or struggling)
+3. Be concise and focus on what's actually helpful for their specific question.
 
-Recommendations:
-- (List any follow-up or suggestions discussed)
+4. If the question is clearly asking for specific guidance or is a follow-up to previous conversation, DO NOT use the structured format - just answer their question directly.
 
-Respond clearly and concisely. If there's not enough info, say so.
+Current question: "{query}"
+
+Based on this question, respond in the most helpful way - either with a structured overview (only for broad summary requests) or direct conversational guidance (for everything else).
 '''

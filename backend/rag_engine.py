@@ -152,8 +152,10 @@ class RAGEngine:
                 # Generate embedding
                 if chunk.embedding is None:
                     embedding = self.embed_text(chunk.content)
-                if not embedding:
-                    continue
+                    if not embedding:
+                        continue
+                else:
+                    embedding = chunk.embedding
 
                 chunk_ids.append(chunk.chunk_id)
                 embeddings.append(embedding)
@@ -371,9 +373,10 @@ class RAGEngine:
             # Apply threshold but ensure minimum chunks
             filtered = [chunk for chunk in chunks if chunk['composite_score'] >= threshold]
 
-            # If too few chunks pass threshold, take top min_chunks anyway
-            if len(filtered) < min_chunks and len(chunks) >= min_chunks:
-                filtered = chunks[:min_chunks]
+            # If too few chunks pass threshold, take what we have up to min_chunks
+            if len(filtered) < min_chunks:
+                # Take the best available chunks up to min_chunks or all available chunks
+                filtered = chunks[:min(min_chunks, len(chunks))]
 
             return filtered
 
@@ -475,7 +478,7 @@ class RAGEngine:
 
             if not relevant_chunks:
                 return {
-                    'answer': f"I don't have any relevant information about '{query}' for this client.",
+                    'answer': f"I couldn't find anything in the notes that directly relates to '{query}'. You might want to check if there are additional session notes to upload, or try rephrasing your question.",
                     'sources': [],
                     'confidence': 0.0,
                     'chunks_used': 0
@@ -487,7 +490,8 @@ class RAGEngine:
                 {
                     'meeting_id': chunk['metadata'].get('meeting_id', 'unknown'),
                     'date': chunk['metadata'].get('date', 'unknown'),
-                    'chunk_id': chunk['id']
+                    'chunk_id': chunk['id'],
+                    'filename': chunk['metadata'].get('original_filename', chunk['metadata'].get('source_file', '').split('/')[-1] if chunk['metadata'].get('source_file') else 'unknown')
                 } for chunk in relevant_chunks
             ]
 
@@ -511,7 +515,7 @@ class RAGEngine:
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             return {
-                'answer': "I encountered an error while processing your query.",
+                'answer': "I'm having some technical difficulties right now. Could you try asking your question again in a moment?",
                 'sources': [],
                 'confidence': 0.0,
                 'chunks_used': 0
