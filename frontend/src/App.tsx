@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 
 const App = () => {
   const [selectedClient, setSelectedClient] = useState('');
@@ -110,7 +111,7 @@ const App = () => {
         setMessages([{
           id: 1,
           type: 'ai',
-          content: "👋 Welcome! No clients have been added yet. Once you upload documents for a client, they will appear here.",
+          content: "Hi there! I'm ready to help you prepare for your sessions. To get started, add a client and upload some session notes - then I can help you review their history and identify patterns.",
           timestamp: new Date()
         }]);
       }
@@ -146,7 +147,7 @@ const App = () => {
       setMessages([{
         id: Date.now(),
         type: "ai",
-        content: `👋 New client '${name}' created. You can now upload documents to get started.`,
+        content: `Great! I've set up a profile for ${name}. Upload some session notes when you're ready, and I'll help you keep track of their progress and identify key themes.`,
         timestamp: new Date()
       }]);
     } catch (err) {
@@ -279,7 +280,7 @@ const App = () => {
       {
         id: 1,
         type: 'ai',
-        content: `Hello! I'm here to help you prepare for your session with ${clientName}. What would you like to know about their case history, treatment goals, or previous sessions?`,
+        content: `Ready to help you prep for ${clientName}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
         timestamp: new Date()
       }
     ]);
@@ -337,7 +338,7 @@ const App = () => {
       const successMessage = {
         id: Date.now(),
         type: "ai",
-        content: `✅ Successfully uploaded and ingested ${files.length} file(s) for ${selectedClient}. Files are now available for querying.`,
+        content: `Perfect! I've processed ${files.length} file(s) for ${selectedClient}. I'm now familiar with their recent sessions and ready to help you prepare for your next meeting.`,
         timestamp: new Date()
       };
       setMessages((prev) => [...prev, successMessage]);
@@ -497,7 +498,7 @@ const App = () => {
                 setMessages([{
                   id: 1,
                   type: 'ai',
-                  content: `Hello! I'm here to help you prepare for your session with ${selectedClient}. What would you like to know about their case history, treatment goals, or previous sessions?`,
+                  content: `Ready to help you prep for ${selectedClient}'s session! I can help you review their recent progress, remind you of key themes from past meetings, or help you spot patterns. What would you like to explore?`,
                   timestamp: new Date()
                 }]);
                 setSelectedDocs([]);
@@ -668,7 +669,20 @@ const App = () => {
                       ? 'bg-blue-600 text-white'
                       : 'bg-white border border-gray-200 text-gray-900'
                   }`}>
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                    <div className="text-sm leading-relaxed">
+                      <ReactMarkdown
+                        components={{
+                          p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                          strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                          em: ({children}) => <em className="italic">{children}</em>,
+                          ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+                          ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+                          li: ({children}) => <li className="text-sm">{children}</li>
+                        }}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
+                    </div>
                     {message.sources && message.sources.length > 0 && (
                       <div className="mt-3 pt-2 border-t border-gray-200">
                         <div className="flex items-center gap-1 mb-1">
@@ -733,7 +747,7 @@ const App = () => {
                       handleSubmit(e);
                     }
                   }}
-                  placeholder={`Ask about ${selectedClient}'s case, goals, or session history...`}
+                  placeholder={`What would you like to know about ${selectedClient}? Ask about patterns, progress, goals, or specific sessions...`}
                   className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                   disabled={isTyping || isStreaming}
                 />

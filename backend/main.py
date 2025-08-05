@@ -118,7 +118,7 @@ def query_docs_stream(req: QueryRequest):
                 # Send error message
                 error_response = {
                     "type": "content",
-                    "content": f"I don't have any relevant information about '{req.query}' for this client."
+                    "content": f"I couldn't find anything in the notes that directly relates to '{req.query}'. You might want to check if there are additional session notes to upload, or try rephrasing your question."
                 }
                 yield f"data: {json.dumps(error_response)}\n\n"
                 yield "data: [DONE]\n\n"

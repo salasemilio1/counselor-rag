@@ -478,7 +478,7 @@ class RAGEngine:
 
             if not relevant_chunks:
                 return {
-                    'answer': f"I don't have any relevant information about '{query}' for this client.",
+                    'answer': f"I couldn't find anything in the notes that directly relates to '{query}'. You might want to check if there are additional session notes to upload, or try rephrasing your question.",
                     'sources': [],
                     'confidence': 0.0,
                     'chunks_used': 0
@@ -515,7 +515,7 @@ class RAGEngine:
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             return {
-                'answer': "I encountered an error while processing your query.",
+                'answer': "I'm having some technical difficulties right now. Could you try asking your question again in a moment?",
                 'sources': [],
                 'confidence': 0.0,
                 'chunks_used': 0
