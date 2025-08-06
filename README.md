@@ -198,6 +198,8 @@ If you encounter issues:
 ## 💡 Tips for Best Results
 
 1. **Consistent Naming**: Use consistent client names across documents
+    - For best results, use "CLIENTNAME_SESSIONNUMBER_YEAR-MONTH-DAY" as filename
+    ex: eli_001_2000-01-01.txt
 2. **Structured Notes**: Well-organized session notes produce better AI responses
 3. **Regular Backups**: Backup your `data` folder regularly
 4. **Clear Questions**: Ask specific questions for more targeted responses
@@ -213,4 +215,6 @@ If you encounter issues:
 
 ---
 
-**Need Support?** This system is designed to be user-friendly, but if you need technical assistance, keep the terminal windows open to see any error messages, and don't hesitate to ask for help from your IT support team.
+## 💬 Contact
+For technical questions, demos, or business inquiries, reach out to: 
+📧 emilio.salas.data@gmail.com
