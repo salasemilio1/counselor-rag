@@ -749,7 +749,7 @@ const App = () => {
         </div>
         
         <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          CounselAI
+          Memoire
         </div>
         
         <div className="w-16"></div> {/* Spacer for centering */}
@@ -764,7 +764,7 @@ const App = () => {
               <MessageCircle className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-gray-900 dark:text-white">CounselAI</h1>
+              <h1 className="text-lg font-semibold text-gray-900 dark:text-white">Memoire</h1>
               <p className="text-sm text-gray-500 dark:text-gray-400">Session Preparation</p>
             </div>
           </div>
