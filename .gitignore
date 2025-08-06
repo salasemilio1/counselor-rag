@@ -69,3 +69,4 @@ dist-ssr
 /frontend/.vite
 /data/metadata
 /data/chats
+/frontend/.vite

@@ -78,6 +78,7 @@ const App = () => {
 
   // Client list state (fetched from backend)
   const [clientList, setClientList] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -714,6 +715,11 @@ const App = () => {
     }
   };
 
+  // Filter clients based on search term
+  const filteredClients = clientList.filter(client =>
+    client.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
       {/* VSCode-style Window Controls */}
@@ -803,14 +809,33 @@ const App = () => {
               <input
                 type="text"
                 placeholder="Search clients..."
-                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-10 py-2 border border-gray-200 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-800 dark:text-white dark:placeholder-gray-400"
               />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title="Clear search"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
           </div>
 
           <div className="space-y-2">
-            <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide px-2">Clients</h3>
-            {clientList.map((client) => (
+            <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide px-2">
+              Clients {searchTerm && `(${filteredClients.length})`}
+            </h3>
+            {filteredClients.length === 0 && searchTerm ? (
+              <div className="text-center py-8">
+                <Search className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                <p className="text-sm text-gray-500 dark:text-gray-400">No clients found for "{searchTerm}"</p>
+              </div>
+            ) : (
+              filteredClients.map((client) => (
               <div
                 key={client.name}
                 onClick={() => handleClientSelect(client.name)}
@@ -837,7 +862,8 @@ const App = () => {
                   </div>
                 </div>
               </div>
-            ))}
+            ))
+            )}
           </div>
         </div>
       </aside>
