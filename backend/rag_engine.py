@@ -26,6 +26,7 @@ except ImportError:
 
 from document_loader import DocumentLoader, DocumentChunk
 from llm_wrapper import LLMWrapper
+from soap_parser import SOAPParser, SOAPSection
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +52,7 @@ class RAGEngine:
         # Initialize components
         self.llm_wrapper = LLMWrapper()
         self.document_loader = DocumentLoader(data_dir, self.llm_wrapper)
+        self.soap_parser = SOAPParser()
         self.embedding_model = None
         self.vector_db = None
         
@@ -278,8 +280,8 @@ class RAGEngine:
 
             return list(set(entities))  # Remove duplicates
 
-        def _rerank_chunks_with_keyword_matching(chunks: List[Dict], query_entities: List[str]) -> List[Dict]:
-            """Re-rank chunks based on keyword matching and metadata relevance"""
+        def _rerank_chunks_with_keyword_matching(chunks: List[Dict], query_entities: List[str], query_analysis: Dict) -> List[Dict]:
+            """Re-rank chunks based on keyword matching, metadata relevance, and SOAP section relevance"""
             for chunk in chunks:
                 content_lower = chunk['content'].lower()
                 metadata = chunk.get('metadata', {})
@@ -312,17 +314,42 @@ class RAGEngine:
                 # Boost chunks from specific meetings if relevant
                 if 'title' in metadata and any(term in metadata['title'].lower() for term in ['breakthrough', 'crisis', 'important', 'significant']):
                     metadata_boost += 0.1
+                
+                # SOAP section relevance boost
+                soap_boost = 0
+                if metadata.get('chunk_type') == 'soap_section':
+                    soap_section = metadata.get('soap_section', '')
+                    section_weights = query_analysis.get('section_weights', {})
+                    
+                    # Apply section-specific weighting
+                    for section_enum, weight in section_weights.items():
+                        if soap_section == section_enum.value and weight > 1.0:
+                            soap_boost += (weight - 1.0) * 0.2  # Convert weight to boost
+                    
+                    # Additional boost for structured SOAP content
+                    soap_boost += 0.1
+
+                # Enhanced clinical keyword matching for SOAP content
+                clinical_boost = 0
+                clinical_keywords = query_analysis.get('enhanced_keywords', [])
+                if clinical_keywords:
+                    clinical_matches = sum(1 for keyword in clinical_keywords if keyword in content_lower)
+                    clinical_boost = min(clinical_matches * 0.05, 0.15)
 
                 # Composite score: weighted combination
                 composite_score = (
-                    0.6 * vector_similarity +      # Vector similarity weight
-                    0.3 * keyword_score +          # Keyword matching weight  
-                    0.1 * metadata_boost           # Metadata relevance weight
+                    0.5 * vector_similarity +      # Vector similarity weight
+                    0.25 * keyword_score +         # Keyword matching weight  
+                    0.1 * metadata_boost +         # Metadata relevance weight
+                    0.1 * soap_boost +             # SOAP section relevance
+                    0.05 * clinical_boost          # Clinical keyword boost
                 )
 
                 chunk['composite_score'] = composite_score
                 chunk['keyword_matches'] = keyword_matches
                 chunk['vector_similarity'] = vector_similarity
+                chunk['soap_boost'] = soap_boost
+                chunk['clinical_boost'] = clinical_boost
 
             # Sort by composite score (descending)
             chunks.sort(key=lambda x: x['composite_score'], reverse=True)
@@ -392,9 +419,11 @@ class RAGEngine:
             if not query_embedding:
                 return []
 
-            # Extract query entities for enhanced matching
+            # Extract query entities and analyze for SOAP relevance
             query_entities = _extract_query_entities(query)
+            query_analysis = self.soap_parser.enhance_retrieval_query(query)
             logger.info(f"Extracted query entities: {query_entities}")
+            logger.info(f"SOAP analysis - enhanced keywords: {query_analysis.get('enhanced_keywords', [])}")
 
             # Get client collection
             collection = self._get_client_collection(client_id)
@@ -438,9 +467,9 @@ class RAGEngine:
             if not relevant_chunks:
                 return []
 
-            # Apply enhanced re-ranking
-            reranked_chunks = _rerank_chunks_with_keyword_matching(relevant_chunks, query_entities)
-            logger.info(f"Re-ranked chunks by composite scoring")
+            # Apply enhanced re-ranking with SOAP awareness
+            reranked_chunks = _rerank_chunks_with_keyword_matching(relevant_chunks, query_entities, query_analysis)
+            logger.info(f"Re-ranked chunks by composite scoring with SOAP awareness")
 
             # Apply diversity filtering to avoid over-representation
             diverse_chunks = _apply_diversity_filtering(reranked_chunks, max_chunks_per_meeting=2)

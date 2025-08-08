@@ -10,6 +10,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 import uuid
 from llm_wrapper import LLMWrapper
+from soap_parser import SOAPParser, SOAPContent, SOAPChunk, SOAPSection
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +48,9 @@ class DocumentLoader:
         self.llm_wrapper = llm_wrapper or LLMWrapper()
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        
+        # Initialize SOAP parser
+        self.soap_parser = SOAPParser()
         
         # Initialize text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -183,36 +187,84 @@ class DocumentLoader:
             return None
     
     def chunk_document(self, meeting_note: MeetingNote) -> List[DocumentChunk]:
-        """Split a meeting note into chunks for vector embedding"""
+        """Split a meeting note into chunks for vector embedding with SOAP awareness"""
         try:
-            # Split the content
-            chunks = self.text_splitter.split_text(meeting_note.content)
+            # First, try SOAP-aware parsing
+            soap_content = self.soap_parser.parse_soap_note(meeting_note.content)
             
-            document_chunks = []
-            for i, chunk_content in enumerate(chunks):
-                chunk = DocumentChunk(
-                    chunk_id=f"{meeting_note.client_id}_{meeting_note.meeting_id}_chunk_{i}",
-                    client_id=meeting_note.client_id,
-                    meeting_id=meeting_note.meeting_id,
-                    content=chunk_content,
-                    chunk_index=i,
-                    metadata={
-                        'source_file': meeting_note.file_path,
-                        'date': meeting_note.date,
-                        'title': meeting_note.title,
-                        'total_chunks': len(chunks),
-                        'client_id': meeting_note.client_id,
-                        'meeting_id': meeting_note.meeting_id,
-                        'original_filename': meeting_note.metadata.get('original_filename', Path(meeting_note.file_path).name)
-                    }
-                )
-                document_chunks.append(chunk)
-            
-            return document_chunks
+            if soap_content.is_soap_format:
+                logger.info(f"Processing {meeting_note.file_path} as SOAP note")
+                return self._create_soap_aware_chunks(meeting_note, soap_content)
+            else:
+                logger.info(f"Processing {meeting_note.file_path} as unstructured note")
+                return self._create_traditional_chunks(meeting_note)
             
         except Exception as e:
             logger.error(f"Error chunking document: {e}")
-            return []
+            # Fallback to traditional chunking
+            return self._create_traditional_chunks(meeting_note)
+    
+    def _create_soap_aware_chunks(self, meeting_note: MeetingNote, soap_content: SOAPContent) -> List[DocumentChunk]:
+        """Create chunks from SOAP-structured content"""
+        base_metadata = {
+            'source_file': meeting_note.file_path,
+            'date': meeting_note.date,
+            'title': meeting_note.title,
+            'client_id': meeting_note.client_id,
+            'meeting_id': meeting_note.meeting_id,
+            'original_filename': meeting_note.metadata.get('original_filename', Path(meeting_note.file_path).name),
+            'document_type': 'soap_note'
+        }
+        
+        # Get SOAP chunks
+        soap_chunks = self.soap_parser.create_soap_chunks(soap_content, base_metadata)
+        
+        # Convert to DocumentChunk format
+        document_chunks = []
+        for i, soap_chunk in enumerate(soap_chunks):
+            chunk = DocumentChunk(
+                chunk_id=f"{meeting_note.client_id}_{meeting_note.meeting_id}_soap_{soap_chunk.section_type.value}_{i}",
+                client_id=meeting_note.client_id,
+                meeting_id=meeting_note.meeting_id,
+                content=soap_chunk.content,
+                chunk_index=i,
+                metadata={
+                    **soap_chunk.metadata,
+                    'total_chunks': len(soap_chunks),
+                    'chunk_type': 'soap_section'
+                }
+            )
+            document_chunks.append(chunk)
+        
+        return document_chunks
+    
+    def _create_traditional_chunks(self, meeting_note: MeetingNote) -> List[DocumentChunk]:
+        """Create chunks using traditional text splitting"""
+        chunks = self.text_splitter.split_text(meeting_note.content)
+        
+        document_chunks = []
+        for i, chunk_content in enumerate(chunks):
+            chunk = DocumentChunk(
+                chunk_id=f"{meeting_note.client_id}_{meeting_note.meeting_id}_chunk_{i}",
+                client_id=meeting_note.client_id,
+                meeting_id=meeting_note.meeting_id,
+                content=chunk_content,
+                chunk_index=i,
+                metadata={
+                    'source_file': meeting_note.file_path,
+                    'date': meeting_note.date,
+                    'title': meeting_note.title,
+                    'total_chunks': len(chunks),
+                    'client_id': meeting_note.client_id,
+                    'meeting_id': meeting_note.meeting_id,
+                    'original_filename': meeting_note.metadata.get('original_filename', Path(meeting_note.file_path).name),
+                    'document_type': 'unstructured_note',
+                    'chunk_type': 'text_split'
+                }
+            )
+            document_chunks.append(chunk)
+        
+        return document_chunks
     
     def process_client_documents(self, client_id: str, force_reprocess: bool = False) -> List[DocumentChunk]:
         """Process all documents for a specific client"""
