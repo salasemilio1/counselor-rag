@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle, History, Save, MoreHorizontal, Moon, Sun, PanelLeft, Square, Minus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import TrialStatus from './components/TrialStatus';
+import LicenseModal from './components/LicenseModal';
 
 const App = () => {
   const [selectedClient, setSelectedClient] = useState('');
@@ -44,6 +46,10 @@ const App = () => {
     const saved = localStorage.getItem('sidebarCollapsed');
     return saved ? JSON.parse(saved) : false;
   });
+
+  // License modal state
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
+  const [licenseModalTrigger, setLicenseModalTrigger] = useState<'trial_expired' | 'upgrade' | null>(null);
   // New: fetch and load selected source document text
   useEffect(() => {
     const fetchSourceText = async () => {
@@ -120,6 +126,14 @@ const App = () => {
 
       if (data.error) {
         console.error("Backend error:", data.error);
+        return;
+      }
+
+      // Check if trial has expired
+      if (data.trial_expired) {
+        setLicenseModalTrigger('trial_expired');
+        setShowLicenseModal(true);
+        setClientList([]);
         return;
       }
 
@@ -209,7 +223,15 @@ const App = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client_id: clientId })
       });
-      if (!res.ok) throw new Error("Failed to create client");
+      const clientData = await res.json();
+      if (!res.ok) {
+        // Check if it's a license restriction error
+        if (res.status === 403 || clientData.message?.includes('trial') || clientData.message?.includes('limit')) {
+          setLicenseModalTrigger('trial_expired');
+          setShowLicenseModal(true);
+        }
+        throw new Error(clientData.message || "Failed to create client");
+      }
       await fetchClients();
       setSelectedClient(name);
       setMessages([{
@@ -403,8 +425,14 @@ const App = () => {
         body: formData
       });
 
+      const uploadData = await uploadRes.json();
       if (!uploadRes.ok) {
-        throw new Error("Upload failed");
+        // Check if it's a license restriction error
+        if (uploadRes.status === 403 || uploadData.message?.includes('trial') || uploadData.message?.includes('limit')) {
+          setLicenseModalTrigger('trial_expired');
+          setShowLicenseModal(true);
+        }
+        throw new Error(uploadData.message || "Upload failed");
       }
 
       // Trigger ingestion after upload
@@ -799,6 +827,17 @@ const App = () => {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Trial Status */}
+        <div className="px-4 pb-4">
+          <TrialStatus 
+            onUpgradeClick={() => {
+              setLicenseModalTrigger('upgrade');
+              setShowLicenseModal(true);
+            }}
+            compact={true}
+          />
         </div>
 
         {/* Client List */}
@@ -1501,6 +1540,20 @@ const App = () => {
           </div>
         </div>
       )}
+
+      {/* License Modal */}
+      <LicenseModal 
+        isOpen={showLicenseModal}
+        onClose={() => {
+          setShowLicenseModal(false);
+          setLicenseModalTrigger(null);
+        }}
+        onSuccess={() => {
+          // Refresh the page or update the license status
+          window.location.reload();
+        }}
+        isTrialExpired={licenseModalTrigger === 'trial_expired'}
+      />
     </div>
   );
 };

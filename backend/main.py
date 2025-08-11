@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 from rag_engine import RAGEngine
+from license_manager import LicenseManager
 from datetime import datetime, timedelta
 import uuid
 
@@ -27,8 +28,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize the engine
-engine = RAGEngine()
+# Initialize the engine and license manager
+# Use the data directory from the parent folder where the real client data is
+engine = RAGEngine(data_dir="../data", vector_db_path="../data/vector_db")
+license_manager = LicenseManager(engine.data_dir)
 
 # Mount static files for document serving
 app.mount("/static", StaticFiles(directory=str(engine.data_dir)), name="static")
@@ -69,13 +72,22 @@ class SaveChatRequest(BaseModel):
     title: str
     messages: List[dict]
 
+class LicenseActivationRequest(BaseModel):
+    license_key: str
+
 # --- Routes ---
 @app.get("/health")
 def health():
+    # Record session start for engagement tracking
+    license_manager.record_session_start()
     return {"status": "ok"}
 
 @app.get("/clients")
 def list_clients():
+    # Check license before listing clients
+    if not license_manager.is_trial_valid():
+        return {"clients": [], "trial_expired": True, "message": "Trial expired. Please purchase a license to access your clients."}
+    
     try:
         clients_dir = engine.data_dir / "clients"
         if not clients_dir.exists():
@@ -88,6 +100,10 @@ def list_clients():
 
 @app.get("/meetings/{client_id}")
 def get_meetings(client_id: str):
+    # Check license before getting meetings
+    if not license_manager.is_trial_valid():
+        return {"meetings": [], "files": [], "trial_expired": True, "message": "Trial expired. Please purchase a license to access your data."}
+    
     try:
         summary = engine.get_client_summary(client_id)
         # Ensure consistent response structure
@@ -101,7 +117,20 @@ def get_meetings(client_id: str):
 
 @app.post("/query", response_model=QueryResponse)
 def query_docs(req: QueryRequest):
+    # Check license before processing query
+    can_query, message = license_manager.can_make_query()
+    if not can_query:
+        return QueryResponse(
+            answer=f"🚫 {message}",
+            sources=[],
+            confidence=0.0,
+            chunks_used=0
+        )
+    
     try:
+        # Record the query for usage tracking
+        license_manager.record_query()
+        
         result = engine.generate_response(
             client_id=req.client_id,
             query=req.query,
@@ -120,7 +149,21 @@ def query_docs(req: QueryRequest):
 def query_docs_stream(req: QueryRequest):
     """Stream the response for real-time text generation"""
     def generate_stream():
+        # Check license before processing query
+        can_query, message = license_manager.can_make_query()
+        if not can_query:
+            error_response = {
+                "type": "error",
+                "content": f"🚫 {message}"
+            }
+            yield f"data: {json.dumps(error_response)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        
         try:
+            # Record the query for usage tracking
+            license_manager.record_query()
+            
             # Step 1: Retrieve chunks (same as regular query)
             relevant_chunks = engine.retrieve_relevant_chunks(
                 req.client_id, 
@@ -209,6 +252,11 @@ def query_docs_stream(req: QueryRequest):
 @app.post("/upload")
 async def upload_file(client_id: str = Form(...), files: List[UploadFile] = File(...)):
     """Upload documents for a specific client"""
+    # Check license before allowing upload
+    can_upload, message = license_manager.can_upload_document()
+    if not can_upload:
+        return {"status": "error", "message": message}
+    
     try:
         upload_dir = engine.data_dir / "clients" / client_id
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -219,6 +267,8 @@ async def upload_file(client_id: str = Form(...), files: List[UploadFile] = File
             with open(file_path, "wb") as f:
                 shutil.copyfileobj(file.file, f)
             uploaded_files.append(file.filename)
+            # Record each document upload
+            license_manager.record_document_upload()
         
         return {"status": "success", "uploaded_files": uploaded_files}
     except Exception as e:
@@ -260,12 +310,18 @@ def get_debug_chunks(client_id: str):
 @app.post("/clients/create")
 def create_client(req: NewClientRequest):
     """Create a new client directory and initialize metadata"""
+    # Check license before creating client
+    can_create, message = license_manager.can_create_client()
+    if not can_create:
+        return JSONResponse(status_code=403, content={"status": "error", "message": message})
+    
     client_id = req.client_id.lower().replace(" ", "_")
     client_dir = engine.data_dir / "clients" / client_id
     try:
         # Create the directory if it doesn't exist yet
         client_dir.mkdir(parents=True, exist_ok=True)
-        # Optionally initialize cache or metadata
+        # Record client creation
+        license_manager.record_client_creation()
         return {"status": "success", "client_id": client_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
@@ -489,6 +545,46 @@ def delete_chat_session(client_id: str, session_id: str):
         raise
     except Exception as e:
         logger.error(f"Error deleting chat session {session_id} for {client_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- License Management Endpoints ---
+@app.get("/license/status")
+def get_license_status():
+    """Get current license status and usage information"""
+    try:
+        return license_manager.get_license_status()
+    except Exception as e:
+        logger.error(f"Error getting license status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/license/activate")
+def activate_license(request: LicenseActivationRequest):
+    """Activate a pro license with a license key"""
+    try:
+        success, message = license_manager.activate_pro_license(request.license_key)
+        if success:
+            return {"status": "success", "message": message}
+        else:
+            return JSONResponse(
+                status_code=400, 
+                content={"status": "error", "message": message}
+            )
+    except Exception as e:
+        logger.error(f"Error activating license: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/license/trial-info")
+def get_trial_info():
+    """Get trial period information"""
+    try:
+        return {
+            "is_trial": license_manager.license_data.get('license_type') == 'trial',
+            "days_remaining": license_manager.get_trial_days_remaining(),
+            "trial_valid": license_manager.is_trial_valid(),
+            "trial_end": license_manager.license_data.get('trial_end')
+        }
+    except Exception as e:
+        logger.error(f"Error getting trial info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":  # Fixed the syntax error
