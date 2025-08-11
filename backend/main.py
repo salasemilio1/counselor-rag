@@ -75,6 +75,10 @@ class SaveChatRequest(BaseModel):
 class LicenseActivationRequest(BaseModel):
     license_key: str
 
+class AccountCreationRequest(BaseModel):
+    email: str
+    name: Optional[str] = None
+
 # --- Routes ---
 @app.get("/health")
 def health():
@@ -712,6 +716,48 @@ def get_trial_info():
         }
     except Exception as e:
         logger.error(f"Error getting trial info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/account/create")
+def create_account(request: AccountCreationRequest):
+    """Create user account and extend trial to Phase 2"""
+    try:
+        success, message = license_manager.create_user_account(request.email, request.name)
+        if success:
+            return {
+                "status": "success", 
+                "message": message,
+                "account": license_manager.get_user_account(),
+                "trial_status": license_manager.get_trial_status()
+            }
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": message}
+            )
+    except Exception as e:
+        logger.error(f"Error creating account: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/account/info")
+def get_account_info():
+    """Get current user account information"""
+    try:
+        account = license_manager.get_user_account()
+        if account:
+            return {
+                "status": "success",
+                "account": account,
+                "trial_status": license_manager.get_trial_status()
+            }
+        else:
+            return {
+                "status": "no_account",
+                "message": "No account found",
+                "trial_status": license_manager.get_trial_status()
+            }
+    except Exception as e:
+        logger.error(f"Error getting account info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":  # Fixed the syntax error
