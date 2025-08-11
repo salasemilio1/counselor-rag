@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle, History, Save, MoreHorizontal, Moon, Sun, PanelLeft, Square, Minus } from 'lucide-react';
+import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle, History, Save, MoreHorizontal, Moon, Sun, PanelLeft, Square, Minus, RefreshCw, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import TrialStatus from './components/TrialStatus';
 import LicenseModal from './components/LicenseModal';
@@ -50,6 +50,10 @@ const App = () => {
   // License modal state
   const [showLicenseModal, setShowLicenseModal] = useState(false);
   const [licenseModalTrigger, setLicenseModalTrigger] = useState<'trial_expired' | 'upgrade' | null>(null);
+  
+  // Ingestion status state
+  const [ingestionStatus, setIngestionStatus] = useState(null);
+  const [isIngesting, setIsIngesting] = useState(false);
   // New: fetch and load selected source document text
   useEffect(() => {
     const fetchSourceText = async () => {
@@ -112,8 +116,74 @@ const App = () => {
         setDocuments([]);
       }
     };
+    
+    // Also fetch ingestion status when client changes
+    const fetchIngestionStatus = async () => {
+      if (!selectedClient) return;
+      try {
+        const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+        const res = await fetch(`${BACKEND_URL}/ingestion-status/${clientId}`);
+        const data = await res.json();
+        setIngestionStatus(data);
+      } catch (error) {
+        console.error('Failed to fetch ingestion status:', error);
+        setIngestionStatus(null);
+      }
+    };
+    
     fetchDocuments();
+    fetchIngestionStatus();
   }, [selectedClient]);
+
+  // Ingestion API functions
+  const handleAutoIngest = async () => {
+    if (!selectedClient || isIngesting) return;
+    
+    setIsIngesting(true);
+    try {
+      const clientId = selectedClient.toLowerCase().replace(/\s+/g, '');
+      const res = await fetch(`${BACKEND_URL}/auto-ingest/${clientId}`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      
+      if (data.status === 'success') {
+        // Refresh documents and ingestion status
+        const fetchDocuments = async () => {
+          try {
+            const res = await fetch(`${BACKEND_URL}/meetings/${clientId}`);
+            const data = await res.json();
+            const realDocs = (data.meetings || data.files || []).map((doc, index) => ({
+              id: doc.id || `doc_${index}`,
+              name: doc.name || doc.filename || `Doc ${index + 1}`,
+              filename: doc.filename || doc.name
+            }));
+            setDocuments(realDocs);
+          } catch (error) {
+            console.error('Failed to refresh documents:', error);
+          }
+        };
+        
+        const fetchIngestionStatus = async () => {
+          try {
+            const res = await fetch(`${BACKEND_URL}/ingestion-status/${clientId}`);
+            const data = await res.json();
+            setIngestionStatus(data);
+          } catch (error) {
+            console.error('Failed to refresh ingestion status:', error);
+          }
+        };
+        
+        await fetchDocuments();
+        await fetchIngestionStatus();
+      } else {
+        console.error('Ingestion failed:', data.message);
+      }
+    } catch (error) {
+      console.error('Failed to trigger ingestion:', error);
+    }
+    setIsIngesting(false);
+  };
 
   // Fetch clients from backend (moved to component scope)
   const fetchClients = async () => {
@@ -945,6 +1015,40 @@ const App = () => {
                       <span className="px-2 py-1 text-xs text-gray-500">+{documents.length - 3} more</span>
                     )}
                   </div>
+                </div>
+              )}
+              
+              {/* Ingestion Status */}
+              {selectedClient && ingestionStatus && (
+                <div className="relative">
+                  {ingestionStatus.status === 'up_to_date' ? (
+                    <button
+                      className="p-2 text-green-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                      title={`All files ingested (${ingestionStatus.total_chunks} chunks)`}
+                    >
+                      <CheckCircle className="w-5 h-5" />
+                    </button>
+                  ) : ingestionStatus.status === 'needs_ingestion' ? (
+                    <button
+                      onClick={handleAutoIngest}
+                      disabled={isIngesting}
+                      className="p-2 text-orange-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={`${ingestionStatus.file_details?.filter(f => f.status !== 'up_to_date').length || 0} files need ingestion - Click to re-ingest`}
+                    >
+                      {isIngesting ? (
+                        <div className="w-5 h-5 border-2 border-orange-300 border-t-orange-600 rounded-full animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-5 h-5" />
+                      )}
+                    </button>
+                  ) : ingestionStatus.status === 'no_files' ? (
+                    <button
+                      className="p-2 text-gray-400 rounded-lg"
+                      title="No files found for this client"
+                    >
+                      <XCircle className="w-5 h-5" />
+                    </button>
+                  ) : null}
                 </div>
               )}
               

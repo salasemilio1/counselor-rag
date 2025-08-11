@@ -307,6 +307,133 @@ def get_debug_chunks(client_id: str):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/ingestion-status/{client_id}")
+def get_ingestion_status(client_id: str):
+    """Check if client files are properly ingested and suggest actions"""
+    try:
+        # Get client files from filesystem
+        client_dir = engine.data_dir / "clients" / client_id
+        if not client_dir.exists():
+            return {"status": "no_client", "message": f"Client {client_id} not found"}
+        
+        files_on_disk = list(client_dir.glob("*.txt"))
+        
+        if not files_on_disk:
+            return {
+                "status": "no_files", 
+                "message": f"No .txt files found for client {client_id}",
+                "files_count": 0,
+                "ingested_count": 0,
+                "needs_ingestion": False
+            }
+        
+        # Get ingested meetings/chunks
+        meetings_data = engine.get_client_summary(client_id)
+        ingested_meetings = meetings_data.get('meetings', [])
+        total_chunks = meetings_data.get('total_chunks', 0)
+        
+        # Check if all files are ingested by comparing file modification times
+        needs_ingestion = False
+        file_status = []
+        
+        for file_path in files_on_disk:
+            file_info = engine.document_loader._extract_client_info_from_filename(file_path.name)
+            meeting_id = file_info.get("meeting_id", "unknown") if file_info else "unknown"
+            
+            # Check if this meeting is in ingested data
+            ingested_meeting = next((m for m in ingested_meetings if m.get('meeting_id') == meeting_id), None)
+            
+            if not ingested_meeting:
+                needs_ingestion = True
+                file_status.append({
+                    "filename": file_path.name,
+                    "meeting_id": meeting_id,
+                    "status": "not_ingested",
+                    "file_size": file_path.stat().st_size,
+                    "modified": file_path.stat().st_mtime
+                })
+            else:
+                # Check if file was modified after ingestion
+                file_mtime = file_path.stat().st_mtime
+                ingested_at = datetime.fromisoformat(ingested_meeting.get('processed_at', '1970-01-01')).timestamp()
+                
+                if file_mtime > ingested_at:
+                    needs_ingestion = True
+                    file_status.append({
+                        "filename": file_path.name,
+                        "meeting_id": meeting_id,
+                        "status": "outdated",
+                        "file_size": file_path.stat().st_size,
+                        "modified": file_mtime,
+                        "ingested_at": ingested_at
+                    })
+                else:
+                    file_status.append({
+                        "filename": file_path.name,
+                        "meeting_id": meeting_id,
+                        "status": "up_to_date",
+                        "file_size": file_path.stat().st_size,
+                        "chunks": ingested_meeting.get('chunk_count', 0)
+                    })
+        
+        return {
+            "status": "needs_ingestion" if needs_ingestion else "up_to_date",
+            "client_id": client_id,
+            "files_count": len(files_on_disk),
+            "ingested_meetings": len(ingested_meetings),
+            "total_chunks": total_chunks,
+            "needs_ingestion": needs_ingestion,
+            "file_details": file_status,
+            "message": "Some files need ingestion" if needs_ingestion else "All files are up to date"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking ingestion status for {client_id}: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/auto-ingest/{client_id}")
+def auto_ingest_client(client_id: str):
+    """Automatically ingest any missing or outdated files for a client"""
+    # Check license before ingestion
+    can_upload, message = license_manager.can_upload_document()
+    if not can_upload:
+        return JSONResponse(status_code=403, content={"status": "error", "message": message})
+    
+    try:
+        # First check what needs ingestion
+        status = get_ingestion_status(client_id)
+        
+        if status.get("status") == "up_to_date":
+            return {"status": "success", "message": "All files already up to date", "ingested": 0}
+        
+        if not status.get("needs_ingestion"):
+            return {"status": "success", "message": "No ingestion needed", "ingested": 0}
+        
+        # Perform ingestion with force=True to ensure all files are processed
+        success = engine.ingest_client_documents(client_id, force_reprocess=True)
+        
+        if success:
+            # Get updated status
+            new_status = get_ingestion_status(client_id)
+            return {
+                "status": "success", 
+                "message": f"Successfully ingested documents for {client_id}",
+                "files_processed": new_status.get("files_count", 0),
+                "total_chunks": new_status.get("total_chunks", 0)
+            }
+        else:
+            return JSONResponse(status_code=400, content={
+                "status": "error",
+                "message": f"Failed to ingest documents for {client_id}"
+            })
+            
+    except Exception as e:
+        logger.error(f"Error in auto-ingest for {client_id}: {e}")
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "message": str(e)
+        })
+
 @app.post("/clients/create")
 def create_client(req: NewClientRequest):
     """Create a new client directory and initialize metadata"""
