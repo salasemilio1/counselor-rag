@@ -92,7 +92,7 @@ fi
 # Check if virtual environment exists, create if it doesn't
 if [ ! -d "venv" ]; then
     print_status "Creating Python virtual environment..."
-    python3 -m venv venv
+    python3 -m venv venv --upgrade-deps
     if [ $? -ne 0 ]; then
         print_error "Failed to create virtual environment"
         exit 1
