@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 from rag_engine import RAGEngine
+from simple_license import SimpleLicenseManager
 from datetime import datetime, timedelta
 import uuid
 
@@ -27,8 +28,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize the engine
+# Initialize the engine and license manager
 engine = RAGEngine()
+license_manager = SimpleLicenseManager()
 
 # Mount static files for document serving
 app.mount("/static", StaticFiles(directory=str(engine.data_dir)), name="static")
@@ -76,6 +78,11 @@ def health():
 
 @app.get("/clients")
 def list_clients():
+    # Check license before listing clients
+    can_use, message = license_manager.can_use_feature()
+    if not can_use:
+        return {"clients": [], "trial_expired": True, "message": message}
+    
     try:
         clients_dir = engine.data_dir / "clients"
         if not clients_dir.exists():
@@ -101,6 +108,16 @@ def get_meetings(client_id: str):
 
 @app.post("/query", response_model=QueryResponse)
 def query_docs(req: QueryRequest):
+    # Check license before processing query
+    can_use, message = license_manager.can_use_feature()
+    if not can_use:
+        return QueryResponse(
+            answer=f"🚫 {message}",
+            sources=[],
+            confidence=0.0,
+            chunks_used=0
+        )
+    
     try:
         result = engine.generate_response(
             client_id=req.client_id,
@@ -209,6 +226,11 @@ def query_docs_stream(req: QueryRequest):
 @app.post("/upload")
 async def upload_file(client_id: str = Form(...), files: List[UploadFile] = File(...)):
     """Upload documents for a specific client"""
+    # Check license before allowing upload
+    can_use, message = license_manager.can_use_feature()
+    if not can_use:
+        return {"status": "error", "message": message}
+    
     try:
         upload_dir = engine.data_dir / "clients" / client_id
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -260,6 +282,11 @@ def get_debug_chunks(client_id: str):
 @app.post("/clients/create")
 def create_client(req: NewClientRequest):
     """Create a new client directory and initialize metadata"""
+    # Check license before creating client
+    can_use, message = license_manager.can_use_feature()
+    if not can_use:
+        return JSONResponse(status_code=403, content={"status": "error", "message": message})
+    
     client_id = req.client_id.lower().replace(" ", "_")
     client_dir = engine.data_dir / "clients" / client_id
     try:
@@ -489,6 +516,19 @@ def delete_chat_session(client_id: str, session_id: str):
         raise
     except Exception as e:
         logger.error(f"Error deleting chat session {session_id} for {client_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- License Management Endpoints ---
+@app.get("/license/status")
+def get_license_status():
+    """Get current license/trial status"""
+    try:
+        status = license_manager.get_trial_status()
+        # Add user-friendly message
+        status['message'] = license_manager.get_trial_message()
+        return status
+    except Exception as e:
+        logger.error(f"Error getting license status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":  # Fixed the syntax error
