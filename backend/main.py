@@ -29,7 +29,8 @@ app.add_middleware(
 )
 
 # Initialize the engine and license manager
-engine = RAGEngine()
+# Use parent directory's data folder instead of backend/data
+engine = RAGEngine(data_dir="../data", vector_db_path="../data/vector_db")
 license_manager = SimpleLicenseManager()
 
 # Mount static files for document serving
