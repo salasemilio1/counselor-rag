@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Plus, MessageCircle, User, Bot, Search, FileText, Calendar, Clock, Upload, X, Settings, Trash2, Eye, AlertTriangle, History, Save, MoreHorizontal, Moon, Sun, PanelLeft, Square, Minus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import SimpleTrialStatus from './components/SimpleTrialStatus';
+import SimpleLicenseModal from './components/SimpleLicenseModal';
 
 const App = () => {
   const [selectedClient, setSelectedClient] = useState('');
@@ -44,6 +46,10 @@ const App = () => {
     const saved = localStorage.getItem('sidebarCollapsed');
     return saved ? JSON.parse(saved) : false;
   });
+
+  // License modal state
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
+  const [licenseModalTrigger, setLicenseModalTrigger] = useState<'trial_expired' | 'upgrade' | null>(null);
   // New: fetch and load selected source document text
   useEffect(() => {
     const fetchSourceText = async () => {
@@ -120,6 +126,14 @@ const App = () => {
 
       if (data.error) {
         console.error("Backend error:", data.error);
+        return;
+      }
+
+      // Check if trial has expired
+      if (data.trial_expired) {
+        setLicenseModalTrigger('trial_expired');
+        setShowLicenseModal(true);
+        setClientList([]);
         return;
       }
 
@@ -866,6 +880,17 @@ const App = () => {
             )}
           </div>
         </div>
+
+        {/* Trial Status */}
+        <div className="px-4 pb-4">
+          <SimpleTrialStatus 
+            onUpgradeClick={() => {
+              setLicenseModalTrigger('upgrade');
+              setShowLicenseModal(true);
+            }}
+            compact={true}
+          />
+        </div>
       </aside>
 
       {/* Main Chat Area */}
@@ -1501,6 +1526,16 @@ const App = () => {
           </div>
         </div>
       )}
+
+      {/* License Modal */}
+      <SimpleLicenseModal 
+        isOpen={showLicenseModal}
+        onClose={() => {
+          setShowLicenseModal(false);
+          setLicenseModalTrigger(null);
+        }}
+        isTrialExpired={licenseModalTrigger === 'trial_expired'}
+      />
     </div>
   );
 };

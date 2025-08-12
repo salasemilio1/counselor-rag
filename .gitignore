@@ -70,3 +70,4 @@ dist-ssr
 /data/metadata
 /data/chats
 /frontend/.vite
+backend/data/vector_db/chroma.sqlite3
