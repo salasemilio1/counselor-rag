@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Get the app bundle directory
+APP_BUNDLE="$(dirname "$(dirname "$(dirname "$(readlink -f "$0" || echo "$0")")")"
+PROJECT_DIR="/Users/emiliosalas/Desktop/rag-system/counselor-rag"
+
+# Change to project directory
+cd "$PROJECT_DIR"
+
+# Check if Terminal is already running our script
+if pgrep -f "start_app.sh" > /dev/null; then
+    echo "Counselor RAG is already running!"
+    open "http://localhost:5173"
+    exit 0
+fi
+
+# Show a simple dialog
+osascript -e 'display dialog "Starting Counselor RAG System..." with title "Counselor RAG" buttons {"OK"} default button 1 with icon note giving up after 3'
+
+# Launch in Terminal
+osascript -e "
+tell application \"Terminal\"
+    activate
+    do script \"cd '$PROJECT_DIR' && ./start_app.sh\"
+end tell
+"
+
+# Wait a moment then try to open browser
+sleep 3
+open "http://localhost:5173" 2>/dev/null || true
