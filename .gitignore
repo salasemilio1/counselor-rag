@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc 
+*.pyo 
 
 # Virtual environment
 venv/
@@ -59,7 +61,6 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
@@ -71,3 +72,25 @@ dist-ssr
 /data/chats
 /frontend/.vite
 backend/data/vector_db/chroma.sqlite3
+
+# Logs
+*.log
+logs/
+backend/logs/
+
+# Debug files
+debug_*.json
+
+# Virtual environments
+venv/
+node_modules
+
+# Vector Databases
+data/vector_db/
+backend/data/
+
+# cache files
+data/metadata/cache.json
+backend/data/metadata/
+
+# Python cache
