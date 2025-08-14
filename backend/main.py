@@ -321,7 +321,11 @@ def list_client_documents(client_id: str):
             return {"documents": []}
         
         documents = []
-        for file_path in client_dir.glob("*.txt"):
+        # Include txt, pdf, and docx files
+        supported_files = (list(client_dir.glob("*.txt")) + 
+                          list(client_dir.glob("*.pdf")) + 
+                          list(client_dir.glob("*.docx")))
+        for file_path in supported_files:
             try:
                 stat = file_path.stat()
                 # Extract info from filename

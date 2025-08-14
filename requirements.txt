@@ -6,3 +6,5 @@ python-dotenv
 chromadb
 langchain
 python-multipart
+PyPDF2
+python-docx

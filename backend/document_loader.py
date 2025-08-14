@@ -11,6 +11,8 @@ from langchain.docstore.document import Document
 import uuid
 from llm_wrapper import LLMWrapper
 from soap_parser import SOAPParser, SOAPContent, SOAPChunk, SOAPSection
+import PyPDF2
+from docx import Document as DocxDocument
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -140,15 +142,50 @@ class DocumentLoader:
             logger.error(f"Error extracting info from filename {filename}: {e}")
             return None
     
+    def _extract_text_from_pdf(self, file_path: Path) -> str:
+        """Extract text content from PDF file"""
+        try:
+            text = ""
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+            return text.strip()
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF {file_path}: {e}")
+            return ""
+    
+    def _extract_text_from_docx(self, file_path: Path) -> str:
+        """Extract text content from Word document (.docx)"""
+        try:
+            doc = DocxDocument(file_path)
+            text = ""
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+            return text.strip()
+        except Exception as e:
+            logger.error(f"Error extracting text from Word document {file_path}: {e}")
+            return ""
+    
     def load_single_document(self, file_path: Path, client_id: str = None, meeting_id: str = None) -> Optional[MeetingNote]:
         """Load a single document and create MeetingNote"""
         try:
-            # Read file content
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
+            # Read file content based on file type
+            file_extension = file_path.suffix.lower()
+            
+            if file_extension == '.pdf':
+                content = self._extract_text_from_pdf(file_path)
+            elif file_extension == '.docx':
+                content = self._extract_text_from_docx(file_path)
+            elif file_extension == '.txt':
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+            else:
+                logger.warning(f"Unsupported file type: {file_extension} for {file_path}")
+                return None
             
             if not content:
-                logger.warning(f"Empty file: {file_path}")
+                logger.warning(f"Empty file or no extractable content: {file_path}")
                 return None
             
             # Extract info from filename if not provided
@@ -277,8 +314,11 @@ class DocumentLoader:
         all_chunks = []
         processed_files = []
         
-        # Find all text files for the client
-        for file_path in client_dir.glob("*.txt"):
+        # Find all supported files for the client (txt, pdf, and docx)
+        supported_files = (list(client_dir.glob("*.txt")) + 
+                          list(client_dir.glob("*.pdf")) + 
+                          list(client_dir.glob("*.docx")))
+        for file_path in supported_files:
             try:
                 file_hash = self._generate_file_hash(file_path)
                 cache_key = f"{client_id}_{file_path.name}"
