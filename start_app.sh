@@ -128,6 +128,9 @@ print_status "Checking for existing processes..."
 lsof -ti:8000 | xargs kill -9 >/dev/null 2>&1
 lsof -ti:5173 | xargs kill -9 >/dev/null 2>&1
 
+# Start ollama server
+ollama serve
+
 # Start backend server
 print_status "Starting backend server on port 8000..."
 cd backend
